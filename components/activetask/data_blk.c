@@ -2,20 +2,24 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-17 19:50:59
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-18 01:03:09
+ * @LastEditTime: 2022-10-18 21:02:26
  * @FilePath    : /activetask/components/activetask/data_blk.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "data_blk.h"
 
 struct datablk_pool {
     struct list_head         list_free;
     struct list_head         list_used;
     SemaphoreHandle_t            mutex;
-}
+};
 
-static datablk_pool gDataBlockPool;
+static struct datablk_pool gDataBlockPool;
 
 static void datablk_fini(DataBlk pdblk)
 {
@@ -25,12 +29,12 @@ static void datablk_fini(DataBlk pdblk)
     // vRingbufferReturnItem(gDataBlockPool.ringbuff, (void *)pdblk->base_ptr);
 
     // return to free list
-    list_move_tail(&pmsgblk->node_msgblk, &gMsgBlockPool.list_free);
+    list_move_tail(&pdblk->node_datablk, &gDataBlockPool.list_free);
     xSemaphoreGive(gDataBlockPool.mutex);    // give
     free(pdblk->base_ptr);  // free mem for data
 }
 
-static void __datablk_relase(truct kref *ref)
+static void __datablk_release(struct kref *ref)
 {
     DataBlk dblk = container_of(ref, struct DataBlk_Stru, refcount);
     datablk_fini(dblk);
@@ -42,7 +46,7 @@ static void __datablk_relase(truct kref *ref)
  * @param        {size_t} buff_size - total buff size for data
  * @return       {*}
  */
-err_t datablk_pool_init(size_t max_num, size_t buff_size)
+esp_err_t datablk_pool_init(size_t max_num, size_t buff_size)
 {
     INIT_LIST_HEAD(&gDataBlockPool.list_free);
     INIT_LIST_HEAD(&gDataBlockPool.list_used);
@@ -94,11 +98,11 @@ void datablk_pool_fini(void)
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*}
  */
-err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms)
+esp_err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms)
 {
     if (0 == data_size || NULL == ppdblk) return INNER_INVAILD_PARAM;
 
-    char *buff == (char *)malloc(data_size);
+    char *buff = (char *)malloc(data_size);
     if (NULL == buff) return DATABLK_FAILED_MALLOC;
 
     if (pdTRUE == xSemaphoreTake(gDataBlockPool.mutex,
@@ -116,7 +120,7 @@ err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms)
         list_move_tail(&dblk->node_datablk, &gDataBlockPool.list_used);
         xSemaphoreGive(gDataBlockPool.mutex);    // give
         datablk_init(dblk);  // init data block
-        dblk->base_ptr = dblk->rd_ptr = dblk->wr_ptr = buff;
+        dblk->base_ptr = dblk->rd_ptr = dblk->wr_ptr = (unsigned char *)buff;
         dblk->buff_size = data_size;
         *ppdblk = dblk;
         return ESP_OK;
@@ -131,11 +135,11 @@ err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms)
  * @param        {DataBlk} pdblk - pinter to a data block
  * @return       {*}
  */
-err_t datablk_free(DataBlk pdblk)
+esp_err_t datablk_free(DataBlk pdblk)
 {
     if (NULL == pdblk) return ESP_OK;
     // decrease reference, if 0 recycle with fini
-    kref_put(&pdblk->refcount, __datablk_relase);  // decrease reference
+    kref_put(&pdblk->refcount, __datablk_release);  // decrease reference
     return ESP_OK;
 }
 
@@ -146,7 +150,7 @@ err_t datablk_free(DataBlk pdblk)
  */
 void datablk_ref(DataBlk pdblk)
 {
-    kref_get(&dblk->refcount);   // increase reference
+    kref_get(&pdblk->refcount);   // increase reference
 }
 
 /***
@@ -157,7 +161,7 @@ void datablk_ref(DataBlk pdblk)
 void datablk_init(DataBlk pdblk)
 {
     if (NULL == pdblk) return;
-    INIT_LIST_HEAD(pdblk->node_msgdata);
+    INIT_LIST_HEAD(&pdblk->node_msgdata);
     pdblk->data_type = -1;
     kref_init(&pdblk->refcount);  // reset reference to 1
     pdblk->buff_size = 0;
@@ -171,7 +175,7 @@ void datablk_init(DataBlk pdblk)
  * @param        {size_t} *psize - pointer to size to be readed
  * @return       {*} bytes readed in psize
  */
-err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize)
+esp_err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize)
 {
     if (NULL == buff || NULL == psize || 0 == *psize)
         return INNER_INVAILD_PARAM;
@@ -192,7 +196,7 @@ err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize)
  * @param        {size_t} *psize - pointer to size to be wrote
  * @return       {*} bytes wrote in psize
  */
-err_t datablk_write(DataBlk pdblk, void *buff, size_t *psize)
+esp_err_t datablk_write(DataBlk pdblk, void *buff, size_t *psize)
 {
     if (NULL == buff || NULL == psize || 0 == *psize)
         return INNER_INVAILD_PARAM;

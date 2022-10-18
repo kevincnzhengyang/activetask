@@ -11,8 +11,13 @@
 #define _LINUX_LLIST_H_
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdatomic.h>
 #include "linux_container_of.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct llist_head {
 	struct llist_node *first;
@@ -173,7 +178,7 @@ static inline bool llist_add_batch(struct llist_node *new_first,
 
 	do {
 		new_last->next = first = head->first;   //READ_ONCE(head->first);
-	} while (!try_cmpxchg(&head->first, &first, new_first));
+	} while (!atomic_compare_exchange_strong(&head->first, &first, new_first));
 
 	return !first;
 }
@@ -243,12 +248,12 @@ static inline struct llist_node *llist_del_first(struct llist_head *head)
 {
 	struct llist_node *entry, *next;
 
-	entry = smp_load_acquire(&head->first);
+	entry = atomic_load(&head->first);
 	do {
 		if (entry == NULL)
 			return NULL;
 		next = entry->next;     //READ_ONCE(entry->next);
-	} while (!try_cmpxchg(&head->first, &entry, next));
+	} while (!atomic_compare_exchange_weak(&head->first, &entry, next));
 
 	return entry;
 }
@@ -273,5 +278,9 @@ static inline struct llist_node *llist_reverse_order(struct llist_node *head)
 
 	return new_head;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _LINUX_LLIST_H_ */

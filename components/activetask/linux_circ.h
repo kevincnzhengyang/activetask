@@ -14,6 +14,10 @@
 #include <string.h>
 #include <stdatomic.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct circ_buf {
     size_t                        size;
 	char                          *buf;
@@ -24,11 +28,11 @@ struct circ_buf {
 // size : 1 << N - 1
 
 #define CIRC_INIT(bits) {\
-    .size = 1 << (bits) - 1;
+    .size = 1 << (bits) - 1, \
     .buf = (char *)malloc(1 << (bits)), \
     .head = 0, \
     .tail = 0, \
-    \}
+}
 
 /* Return count in buffer.  */
 #define __CIRC_CNT(head,tail,size) (((head) - (tail)) & (size))
@@ -55,5 +59,9 @@ struct circ_buf {
 	  n <= end ? n : end+1;})
 
 // TODO atomic acquire and release, read and write
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

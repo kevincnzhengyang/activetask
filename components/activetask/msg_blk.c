@@ -2,11 +2,12 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-17 19:51:34
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-18 01:03:26
+ * @LastEditTime: 2022-10-18 21:05:07
  * @FilePath    : /activetask/components/activetask/msg_blk.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
+#include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/portmacro.h"
 
@@ -16,9 +17,9 @@ struct msgblk_pool {
     struct list_head         list_free;
     struct list_head         list_used;
     SemaphoreHandle_t            mutex;
-}
+};
 
-static msgblk_pool gMsgBlockPool;
+static struct msgblk_pool gMsgBlockPool;
 
 static void msgblk_fini(MsgBlk pmsgblk)
 {
@@ -37,7 +38,7 @@ static void msgblk_fini(MsgBlk pmsgblk)
     xSemaphoreGive(gMsgBlockPool.mutex);    // give
 }
 
-static void __msgblk_relase(truct kref *ref)
+static void __msgblk_release(struct kref *ref)
 {
     MsgBlk mblk = container_of(ref, struct MsgBlk_Stru, refcount);
     msgblk_fini(mblk);
@@ -48,7 +49,7 @@ static void __msgblk_relase(truct kref *ref)
  * @param        {size_t} max_num - maximum number of message block in the pool
  * @return       {*} result of init
  */
-err_t msgblk_pool_init(size_t max_num)
+esp_err_t msgblk_pool_init(size_t max_num)
 {
     INIT_LIST_HEAD(&gMsgBlockPool.list_free);
     INIT_LIST_HEAD(&gMsgBlockPool.list_used);
@@ -101,7 +102,7 @@ void msgblk_pool_fini(void)
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*} result of malloc
  */
-err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk,
+esp_err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk,
         uint32_t wait_ms)
 {
     if (pdTRUE == xSemaphoreTake(gMsgBlockPool.mutex,
@@ -128,11 +129,11 @@ err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk,
  * @param        {MsgBlk} pmsgblk - pointer to a message block
  * @return       {*} result of free
  */
-err_t msgblk_free(MsgBlk pmsgblk)
+esp_err_t msgblk_free(MsgBlk pmsgblk)
 {
     if (NULL == pmsgblk) return ESP_OK;
     // decrease reference, if 0 recycle with fini
-    kref_put(&pmsgblk->refcount, __msgblk_relase);  // decrease reference
+    kref_put(&pmsgblk->refcount, __msgblk_release);  // decrease reference
     return ESP_OK;
 }
 
@@ -144,7 +145,7 @@ err_t msgblk_free(MsgBlk pmsgblk)
 void msgblk_init(MsgBlk pmsgblk)
 {
     if (NULL == pmsgblk) return;
-    INIT_LIST_HEAD(pmsgblk->list_datablk);
+    INIT_LIST_HEAD(&pmsgblk->list_datablk);
     pmsgblk->msg_type = -1;
     kref_init(&pmsgblk->refcount);  // reset reference to 1
 }
@@ -165,7 +166,7 @@ void msgblk_refer(MsgBlk pmsgblk)
  * @param        {uint32_t} length - maxinum length of queue
  * @return       {*} result of init
  */
-err_t msgblk_queue_init(QueueHandle_t *pqueue, uint32_t length)
+esp_err_t msgblk_queue_init(QueueHandle_t *pqueue, uint32_t length)
 {
     *pqueue = xQueueCreate(length, sizeof(MsgBlk));
     return NULL != *pqueue ? ESP_OK : ESP_FAIL;
@@ -188,7 +189,7 @@ void msgblk_queue_fini(QueueHandle_t queue)
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*} result of push
  */
-err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms)
+esp_err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms)
 {
     if (NULL == queue || NULL == pmsgblk) return INNER_INVAILD_PARAM;
 
@@ -205,7 +206,7 @@ err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms)
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*} result of pop
  */
-err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms)
+esp_err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms)
 {
     if (NULL == queue || NULL == ppmsgblk) return INNER_INVAILD_PARAM;
     return pdTRUE == xQueueReceive(queue,
@@ -219,11 +220,11 @@ err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms)
  * @param        {DataBlk} pdblk - pointer to a data bock
  * @return       {*}
  */
-err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk)
+esp_err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk)
 {
     if (NULL == pmblk || NULL == pdblk) return INNER_INVAILD_PARAM;
     datablk_ref(pdblk);     // increase reference
-    list_add_tail(&dblk->node_msgdata, &mblk->list_datablk);  // attach
+    list_add_tail(&pdblk->node_msgdata, &pmblk->list_datablk);  // attach
     return ESP_OK;
 }
 
@@ -233,7 +234,7 @@ err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk)
  * @param        {DataBlk} pdblk
  * @return       {*}
  */
-err_t msgblk_detach_dbllk(MsgBlk pmblk, DataBlk pdblk)
+esp_err_t msgblk_detach_dbllk(MsgBlk pmblk, DataBlk pdblk)
 {
     if (NULL == pmblk || NULL == pdblk) return INNER_INVAILD_PARAM;
     DataBlk pos;

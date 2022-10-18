@@ -12,8 +12,16 @@
 #define _LINUX_HLIST_H_
 
 #include <stddef.h>
+#include <stdbool.h>
+#include <string.h>
+
+#include "mbedtls/md5.h"
+
 #include "linux_container_of.h"
-#include "linux_xxhash.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct hlist_head {
 	struct hlist_node *first;
@@ -276,39 +284,51 @@ static inline void hlist_move_list(struct hlist_head *old,
  **************************************
  */
 
-struct hash_table {
-    size_t                        bits;
-    struct hlist_head        *hh_array;
-};
+#define DEFINE_HASHTABLE(name, bits)                        \
+    static size_t Bits_##name = bits;                       \
+	static struct hlist_head name[1 << (bits)] =            \
+			{ [0 ... ((1 << (bits)) - 1)] = HLIST_HEAD_INIT }
 
+#define DECLARE_HASHTABLE(name, bits)                       \
+    static size_t gBits##name = bits;                       \
+	struct hlist_head name[1 << (bits)]
 
-#define DECLARE_HASHTABLE(bits) { \
-    .bits = bits, \
-    .hh_array = (struct hlist_head *)malloc(sizeof(struct hlist_head) * (1 << (bits))), \
-}
-
-#define HASH_INIT(ht) \
-do { \
-    memset((ht)->hh_array, 0, sizeof(struct hlist_head) * (1 << (ht)->bits)); \
-} while(0)
-
-#define HASH_SIZE(ht) (ARRAY_SIZE((ht)->hh_array))
-#define HASH_BITS(ht) ((ht)->bits)
+#define HASH_SIZE(name) (ARRAY_SIZE(name))
+// #define HASH_BITS(ht) ((ht)->bits)
 
 /* Use hash_32 when possible to allow for fast 32bit hashing in 64bit kernels. */
-// #define hash_min(val, bits)							\
-// 	(sizeof(val) <= 4 ? hash_32(val, bits) : hash_long(val, bits))
-#define hash_min(val, length, bits)							\
-	(sizeof(val) <= 4 ? (xxh32(val, length, NULLL) >> (32 - bits)) : \
-        (xxh64(val, length, NULL) >> (64 - bits)))
+/*
+#define hash_min(val, bits)							\
+	(sizeof(val) <= 4 ? hash_32(val, bits) : hash_long(val, bits))
+*/
+static inline uint32_t hash_min(const char *val, size_t bits)
+{
+    mbedtls_md5_context ctx;
+    unsigned char decrypt[16];
 
-// static inline void __hash_init(struct hlist_head *ht, unsigned int sz)
-// {
-// 	unsigned int i;
+    mbedtls_md5_init(&ctx);
+    mbedtls_md5_starts(&ctx);
+    mbedtls_md5_update(&ctx, (unsigned char *)val, strlen(val));
+    mbedtls_md5_finish(&ctx, decrypt);
+    mbedtls_md5_free(&ctx);
+    KRNL_DEBUG("%s md5 is:[", val);
+    for (int i = 0; i < 16; i++)
+        KRNL_DEBUG("%02x", decrypt[i]);
+    KRNL_DEBUG("]\n");
 
-// 	for (i = 0; i < sz; i++)
-// 		INIT_HLIST_HEAD(&ht[i]);
-// }
+    uint32_t digest = (decrypt[3] << 24 | decrypt[2] << 16 \
+                        | decrypt[1] << 8 | decrypt[0]) >> (32 - bits);
+    KRNL_DEBUG("%s md5 digest is:<%lx>", val, digest);
+    return digest;
+}
+
+static inline void __hash_init(struct hlist_head *ht, unsigned int sz)
+{
+	unsigned int i;
+
+	for (i = 0; i < sz; i++)
+		INIT_HLIST_HEAD(&ht[i]);
+}
 
 /**
  * hash_init - initialize a hash table
@@ -320,30 +340,17 @@ do { \
  * This has to be a macro since HASH_BITS() will not work on pointers since
  * it calculates the size during preprocessing.
  */
-// #define hash_init(hashtable) __hash_init(hashtable, HASH_SIZE(hashtable))
-#define hash_init(ht) \
-do { \
-    memset((ht)->hh_array, 0, sizeof(struct hlist_head) * (1 << (ht)->bits)); \
-} while(0)
+#define hash_init(hashtable) __hash_init(hashtable, HASH_SIZE(hashtable))
 
 /**
  * hash_add - add an object to a hashtable
  * @hashtable: hashtable to add to
  * @node: the &struct hlist_node of the object to be added
  * @key: the key of the object to be added
- * @key: the length of the key
+ * @bits: the bits of the hash table
  */
-#define hash_add(hashtable, node, key, length)						\
-	hlist_add_head(node, &hashtable->hh_array[hash_min(key, length, HASH_BITS(hashtable))])
-
-/**
- * hash_add_rcu - add an object to a rcu enabled hashtable
- * @hashtable: hashtable to add to
- * @node: the &struct hlist_node of the object to be added
- * @key: the key of the object to be added
- */
-// #define hash_add_rcu(hashtable, node, key)					\
-// 	hlist_add_head_rcu(node, &hashtable[hash_min(key, HASH_BITS(hashtable))])
+#define hash_add(hashtable, node, key, bits)						\
+	hlist_add_head(node, &hashtable[hash_min(key, bits)])
 
 /**
  * hash_hashed - check whether an object is in any hashtable
@@ -354,12 +361,12 @@ static inline bool hash_hashed(struct hlist_node *node)
 	return !hlist_unhashed(node);
 }
 
-static inline bool __hash_empty(struct hash_table *ht)
+static inline bool __hash_empty(struct hlist_head *ht, unsigned int sz)
 {
     if (NULL == ht) return true;
 
-	for (unsigned int i = 0; i < HASH_SIZE(ht); i++)
-		if (!hlist_empty(&ht->hh_array[i]))
+	for (unsigned int i = 0; i < sz; i++)
+		if (!hlist_empty(&ht[i]))
 			return false;
 
 	return true;
@@ -372,7 +379,7 @@ static inline bool __hash_empty(struct hash_table *ht)
  * This has to be a macro since HASH_BITS() will not work on pointers since
  * it calculates the size during preprocessing.
  */
-#define hash_empty(hashtable) __hash_empty(hashtable)
+#define hash_empty(hashtable) __hash_empty(hashtable, HASH_SIZE(hashtable))
 
 /**
  * hash_del - remove an object from a hashtable
@@ -384,15 +391,6 @@ static inline void hash_del(struct hlist_node *node)
 }
 
 /**
- * hash_del_rcu - remove an object from a rcu enabled hashtable
- * @node: &struct hlist_node of the object to remove
- */
-// static inline void hash_del_rcu(struct hlist_node *node)
-// {
-// 	hlist_del_init_rcu(node);
-// }
-
-/**
  * hash_for_each - iterate over a hashtable
  * @ht: hashtable to iterate
  * @bkt: integer to use as bucket loop cursor
@@ -402,19 +400,7 @@ static inline void hash_del(struct hlist_node *node)
 #define hash_for_each(ht, bkt, obj, member)				\
 	for ((bkt) = 0, obj = NULL; obj == NULL && (bkt) < HASH_SIZE(ht);\
 			(bkt)++)\
-		hlist_for_each_entry(obj, &t->hh_array[bkt], member)
-
-/**
- * hash_for_each_rcu - iterate over a rcu enabled hashtable
- * @name: hashtable to iterate
- * @bkt: integer to use as bucket loop cursor
- * @obj: the type * to use as a loop cursor for each entry
- * @member: the name of the hlist_node within the struct
- */
-// #define hash_for_each_rcu(name, bkt, obj, member)			\
-// 	for ((bkt) = 0, obj = NULL; obj == NULL && (bkt) < HASH_SIZE(name);\
-// 			(bkt)++)\
-// 		hlist_for_each_entry_rcu(obj, &name[bkt], member)
+		hlist_for_each_entry(obj, &ht[bkt], member)
 
 /**
  * hash_for_each_safe - iterate over a hashtable safe against removal of
@@ -428,7 +414,7 @@ static inline void hash_del(struct hlist_node *node)
 #define hash_for_each_safe(ht, bkt, tmp, obj, member)			\
 	for ((bkt) = 0, obj = NULL; obj == NULL && (bkt) < HASH_SIZE(ht);\
 			(bkt)++)\
-		hlist_for_each_entry_safe(obj, tmp, &ht->hh_array[bkt], member)
+		hlist_for_each_entry_safe(obj, tmp, &ht[bkt], member)
 
 /**
  * hash_for_each_possible - iterate over all possible objects hashing to the
@@ -437,38 +423,10 @@ static inline void hash_del(struct hlist_node *node)
  * @obj: the type * to use as a loop cursor for each entry
  * @member: the name of the hlist_node within the struct
  * @key: the key of the objects to iterate over
- * @length: the length of the key
+ * @bits: the bits of hash table
  */
-#define hash_for_each_possible(ht, obj, member, key, length)			\
-	hlist_for_each_entry(obj, \
-        &t->hh_array[hash_min(key, length, HASH_BITS(name))], member)
-
-/**
- * hash_for_each_possible_rcu - iterate over all possible objects hashing to the
- * same bucket in an rcu enabled hashtable
- * @name: hashtable to iterate
- * @obj: the type * to use as a loop cursor for each entry
- * @member: the name of the hlist_node within the struct
- * @key: the key of the objects to iterate over
- */
-// #define hash_for_each_possible_rcu(name, obj, member, key, cond...)	\
-// 	hlist_for_each_entry_rcu(obj, &name[hash_min(key, HASH_BITS(name))],\
-// 		member, ## cond)
-
-/**
- * hash_for_each_possible_rcu_notrace - iterate over all possible objects hashing
- * to the same bucket in an rcu enabled hashtable in a rcu enabled hashtable
- * @name: hashtable to iterate
- * @obj: the type * to use as a loop cursor for each entry
- * @member: the name of the hlist_node within the struct
- * @key: the key of the objects to iterate over
- *
- * This is the same as hash_for_each_possible_rcu() except that it does
- * not do any RCU debugging or tracing.
- */
-// #define hash_for_each_possible_rcu_notrace(name, obj, member, key) \
-// 	hlist_for_each_entry_rcu_notrace(obj, \
-// 		&name[hash_min(key, HASH_BITS(name))], member)
+#define hash_for_each_possible(ht, obj, member, key, bits)			\
+	hlist_for_each_entry(obj, &(ht)[hash_min(key, bits)], member)
 
 /**
  * hash_for_each_possible_safe - iterate over all possible objects hashing to the
@@ -478,10 +436,14 @@ static inline void hash_del(struct hlist_node *node)
  * @tmp: a &struct hlist_node used for temporary storage
  * @member: the name of the hlist_node within the struct
  * @key: the key of the objects to iterate over
- * @length: the length of the key
+ * @bits: the bits of the hash table
  */
-#define hash_for_each_possible_safe(ht, obj, tmp, member, key, length)	\
-	hlist_for_each_entry_safe(obj, tmp,\
-		&t->hh_array[hash_min(key, length, HASH_BITS(name))], member)
+#define hash_for_each_possible_safe(ht, obj, tmp, member, key, bits)	\
+	hlist_for_each_entry_safe(obj, tmp, \
+        &(ht)[hash_min(key, bits)], member)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _LINUX_HLIST_H_ */

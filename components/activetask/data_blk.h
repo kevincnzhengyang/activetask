@@ -11,13 +11,19 @@
 #define _DATA_BLOCK_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
+#include "freertos/FreeRTOS.h"
+#include "esp_system.h"
 #include "esp_err.h"
 
-#include "linux_list.h"
 #include "inner_err.h"
+#include "linux_list.h"
 #include "linux_refcount.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct DataBlk_Stru {
     int32_t                  data_type;
@@ -28,7 +34,7 @@ struct DataBlk_Stru {
     unsigned char            *base_ptr;
     unsigned char              *rd_ptr;
     unsigned char              *wr_ptr;
-}
+};
 
 #define SIZE_DATABLK     sizeof(struct DataBlk_Stru)
 
@@ -48,7 +54,7 @@ typedef struct DataBlk_Stru * DataBlk;
  * @param        {size_t} buff_size - total buff size for data
  * @return       {*}
  */
-err_t datablk_pool_init(size_t max_num, size_t buff_size);
+esp_err_t datablk_pool_init(size_t max_num, size_t buff_size);
 
 /***
  * @description : clear data block pool
@@ -63,14 +69,14 @@ void datablk_pool_fini(void);
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*}
  */
-err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms);
+esp_err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms);
 
 /***
  * @description : recyle data block
  * @param        {DataBlk} pdblk - pinter to a data block
  * @return       {*}
  */
-err_t datablk_free(DataBlk pdblk);
+esp_err_t datablk_free(DataBlk pdblk);
 
 /***
  * @description : init a data block
@@ -93,7 +99,7 @@ void datablk_ref(DataBlk pdblk);
  * @param        {size_t} *psize - pointer to size to be readed
  * @return       {*} bytes readed in psize
  */
-err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize);
+esp_err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize);
 
 /***
  * @description : write to a data block from a buffer
@@ -102,6 +108,10 @@ err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize);
  * @param        {size_t} *psize - pointer to size to be wrote
  * @return       {*} bytes wrote in psize
  */
-err_t datablk_write(DataBlk pdblk, void *buff, size_t *psize);
+esp_err_t datablk_write(DataBlk pdblk, void *buff, size_t *psize);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _DATA_BLOCK_H_ */

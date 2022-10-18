@@ -13,6 +13,10 @@
 #include <stddef.h>
 #include "linux_container_of.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct list_head {
 	struct list_head *next, *prev;
 };
@@ -335,7 +339,7 @@ static inline int list_empty_careful(const struct list_head *head)
 {
 	// struct list_head *next = smp_load_acquire(&head->next);
 	// return list_is_head(next, head) && (next == READ_ONCE(head->prev));
-    struct list_head *next = &head->next;
+    struct list_head *next = (head)->next;
 	return list_is_head(next, head) && (next == head->prev);
 }
 
@@ -620,10 +624,12 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @pos:	the &struct list_head to use as a loop cursor.
  * @head:	the head for your list.
  */
-// #define list_for_each_rcu(pos, head)		  \
-// 	for (pos = rcu_dereference((head)->next); \
-// 	     !list_is_head(pos, (head)); \
-// 	     pos = rcu_dereference(pos->next))
+/*
+#define list_for_each_rcu(pos, head)		  \
+	for (pos = rcu_dereference((head)->next); \
+	     !list_is_head(pos, (head)); \
+	     pos = rcu_dereference(pos->next))
+*/
 
 /**
  * list_for_each_continue - continue iteration over a list
@@ -834,5 +840,9 @@ static inline void list_splice_tail_init(struct list_head *list,
  */
 #define list_safe_reset_next(pos, n, member)				\
 	n = list_next_entry(pos, member)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _LINUX_LIST_H_ */

@@ -1,3 +1,3 @@
-idf_component_register(SRCS "active_task.c" "linux_xxhash.c"
-        "msg_data.c" "msg_blk.c"
-                    INCLUDE_DIRS ".")
+idf_component_register(SRCS "data_blk.c" "msg_blk.c" "active_task.c"
+                    INCLUDE_DIRS "."
+                    REQUIRES mbedtls)

@@ -11,15 +11,21 @@
 #define _MESSAGE_BLOCK_H_
 
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
 #include "inner_err.h"
-#include "linux_refcount.h"
 #include "linux_list.h"
+#include "linux_refcount.h"
 #include "data_blk.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct MsgBlk_Stru {
     int32_t                   msg_type;     // message type
@@ -30,14 +36,14 @@ struct MsgBlk_Stru {
 
 #define SIZE_MSGBLK     sizeof(struct MsgBlk_Stru)
 
-typedef struct MsgBlk_Stru *   MsgBlk;
+typedef struct MsgBlk_Stru * MsgBlk;
 
 /***
  * @description : init message block pool
  * @param        {size_t} max_num - maximum number of message block in the pool
  * @return       {*} result of init
  */
-err_t msgblk_pool_init(size_t max_num);
+esp_err_t msgblk_pool_init(size_t max_num);
 
 /***
  * @description : clear message block pool
@@ -53,14 +59,14 @@ void msgblk_pool_fini(void);
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*} result of malloc
  */
-err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk, uint32_t wait_ms);
+esp_err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk, uint32_t wait_ms);
 
 /***
  * @description : free a message block
  * @param        {MsgBlk} pmsgblk - pointer to a message block
  * @return       {*} result of free
  */
-err_t msgblk_free(MsgBlk pmsgblk);
+esp_err_t msgblk_free(MsgBlk pmsgblk);
 
 /***
  * @description : init message block
@@ -82,7 +88,7 @@ void msgblk_refer(MsgBlk pmsgblk);
  * @param        {uint32_t} length - maxinum length of queue
  * @return       {*} result of init
  */
-err_t msgblk_queue_init(QueueHandle_t *pqueue, uint32_t length);
+esp_err_t msgblk_queue_init(QueueHandle_t *pqueue, uint32_t length);
 
 /***
  * @description : clear message block queue
@@ -98,7 +104,7 @@ void msgblk_queue_fini(QueueHandle_t queue);
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*} result of push
  */
-err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms);
+esp_err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms);
 
 /***
  * @description : pop a message block from a queue
@@ -107,7 +113,7 @@ err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms);
  * @param        {uint32_t} wait_ms - wait time in ms
  * @return       {*} result of pop
  */
-err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms);
+esp_err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms);
 
 /***
  * @description : attach data block to a message block
@@ -115,7 +121,7 @@ err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms);
  * @param        {DataBlk} pdblk - pointer to a data bock
  * @return       {*}
  */
-err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk);
+esp_err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk);
 
 /***
  * @description : detach data block from a message bock
@@ -123,7 +129,11 @@ err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk);
  * @param        {DataBlk} pdblk
  * @return       {*}
  */
-err_t msgblk_detach_dbllk(MsgBlk pmblk, DataBlk pdblk);
+esp_err_t msgblk_detach_dbllk(MsgBlk pmblk, DataBlk pdblk);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MESSAGE_BLOCK_H_ */
 

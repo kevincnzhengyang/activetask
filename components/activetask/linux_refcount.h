@@ -13,8 +13,12 @@
 #include <stddef.h>
 #include <stdatomic.h>
 
+#include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/portmacro.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * typedef refcount_t - variant of atomic_t specialized for reference counts
@@ -24,9 +28,11 @@
  * there. This avoids wrapping the counter and causing 'spurious'
  * use-after-free bugs.
  */
-typedef struct refcount_struct {
+struct refcount_struct {
 	atomic_int refs;
-} refcount_t;
+};
+
+typedef struct refcount_struct refcount_t;
 
 #define REFCOUNT_INIT(n)	{ .refs = ATOMIC_VAR_INIT(n), }
 #define REFCOUNT_MAX		INT_MAX
@@ -282,7 +288,7 @@ static inline void refcount_dec(refcount_t *r)
  *
  * Return: true if the resulting refcount is 0, false otherwise
  */
-static bool refcount_dec_if_one(refcount_t *r)
+static inline bool refcount_dec_if_one(refcount_t *r)
 {
 	int val = 1;
 
@@ -301,7 +307,7 @@ static bool refcount_dec_if_one(refcount_t *r)
  *
  * Return: true if the decrement operation was successful, false otherwise
  */
-bool refcount_dec_not_one(refcount_t *r)
+static inline bool refcount_dec_not_one(refcount_t *r)
 {
 	unsigned int new, val = atomic_load(&r->refs);  //atomic_read(&r->refs);
 
@@ -340,7 +346,7 @@ bool refcount_dec_not_one(refcount_t *r)
  * Return: true and hold spinlock if able to decrement refcount to 0, false
  *         otherwise
  */
-bool refcount_dec_and_lock(refcount_t *r, SemaphoreHandle_t lock)
+static inline bool refcount_dec_and_lock(refcount_t *r, SemaphoreHandle_t lock)
 {
 	if (refcount_dec_not_one(r))
 		return false;
@@ -444,4 +450,9 @@ static inline int kref_get_unless_zero(struct kref *kref)
 {
 	return refcount_inc_not_zero(&kref->refcount);
 }
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

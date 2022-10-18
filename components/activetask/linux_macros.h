@@ -10,15 +10,21 @@
 #ifndef _LINUX_MACROS_H_
 #define _LINUX_MACROS_H_
 
+#include "esp_log.h"
+#include "esp_err.h"
+
 #define KRNL_TAG "App"
 #define KRNL_DEBUG(fmt, ...)  ESP_LOGD(KRNL_TAG, fmt, ##__VA_ARGS__)
 #define KRNL_INFO(fmt, ...)   ESP_LOGI(KRNL_TAG, fmt, ##__VA_ARGS__)
 #define KRNL_WARN(fmt, ...)   ESP_LOGW(KRNL_TAG, fmt, ##__VA_ARGS__)
+#define KRNL_ERROR(fmt, ...)  ESP_LOGE(KRNL_TAG, fmt, ##__VA_ARGS__)
+
+#define	EINVAL		22	/* Invalid argument */
 
 /* Are two types/vars the same type (ignoring qualifiers)? */
 #define SAME_TYPE(a, b) __builtin_types_compatible_p(typeof(a), typeof(b))
 
-#define BUILD_BUG_ON_ZERO(e) (sizeof(struct {int:-!!(e); }))
+#define BUILD_BUG_ON_ZERO(e) (sizeof(struct {int:(-!!(e)); }))
 
 #define MUST_BE_ARRAY(a) BUILD_BUG_ON_ZERO(SAME_TYPE((a), &(a)[0]))
 
