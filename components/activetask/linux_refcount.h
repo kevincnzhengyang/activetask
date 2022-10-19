@@ -293,7 +293,7 @@ static inline bool refcount_dec_if_one(refcount_t *r)
 	int val = 1;
 
 	// return atomic_try_cmpxchg_release(&r->refs, &val, 0);
-    return atomic_compare_exchange_weak(&r->refs, &val, 0);
+    return atomic_compare_exchange_strong(&r->refs, &val, 0);
 }
 
 /**
@@ -325,7 +325,7 @@ static inline bool refcount_dec_not_one(refcount_t *r)
 			return true;
 		}
     // } while (!atomic_try_cmpxchg_release(&r->refs, &val, new));
-	} while (!atomic_compare_exchange_weak(&r->refs, &val, new));
+	} while (!atomic_compare_exchange_strong(&r->refs, &val, new));
 
 	return true;
 }

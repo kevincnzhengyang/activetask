@@ -2,14 +2,19 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-17 10:32:20
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-18 21:23:25
+ * @LastEditTime: 2022-10-18 23:06:17
  * @FilePath    : /activetask/components/activetask/active_task.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "linux_hlist.h"
 #include "active_task.h"
+
+SemaphoreHandle_t gTaskHashTableMutex;
 
 DEFINE_HASHTABLE(gTaskHashTable, 3);
 
@@ -154,6 +159,7 @@ void active_task_pool_init(size_t bits)
 {
     hash_init(gTaskHashTable);
     KRNL_DEBUG("task pool inited\n");
+    gTaskHashTableMutex = xSemaphoreCreateMutex();
 }
 
 /***
@@ -198,9 +204,10 @@ ActiveTask *active_task_create(const char * name, uint32_t stack,
     KRNL_DEBUG("task %s created\n", task->name);
 
     // add to hashtable
+    xSemaphoreTake(gTaskHashTableMutex, portMAX_DELAY);
     hash_add(gTaskHashTable, &task->node_task,
             task->name, Bits_gTaskHashTable);
-
+    xSemaphoreGive(gTaskHashTableMutex);
     return task;
 }
 
