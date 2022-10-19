@@ -11,10 +11,8 @@
 #define _LINUX_REFCOUNT_H_
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdatomic.h>
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -330,36 +328,6 @@ static inline bool refcount_dec_not_one(refcount_t *r)
 	return true;
 }
 
-/**
- * refcount_dec_and_lock - return holding spinlock if able to decrement
- *                         refcount to 0
- * @r: the refcount
- * @lock: the spinlock to be locked
- *
- * Similar to atomic_dec_and_lock(), it will WARN on underflow and fail to
- * decrement when saturated at REFCOUNT_SATURATED.
- *
- * Provides release memory ordering, such that prior loads and stores are done
- * before, and provides a control dependency such that free() must come after.
- * See the comment on top.
- *
- * Return: true and hold spinlock if able to decrement refcount to 0, false
- *         otherwise
- */
-static inline bool refcount_dec_and_lock(refcount_t *r, SemaphoreHandle_t lock)
-{
-	if (refcount_dec_not_one(r))
-		return false;
-
-	xSemaphoreTake(lock, portMAX_DELAY);    //spin_lock(lock);
-	if (!refcount_dec_and_test(r)) {
-		xSemaphoreGive(lock);   //spin_unlock(lock);
-		return false;
-	}
-
-	return true;
-}
-
 /********************************************
  *
  *  kref
@@ -413,17 +381,6 @@ static inline void kref_get(struct kref *kref)
 static inline int kref_put(struct kref *kref, void (*release)(struct kref *kref))
 {
 	if (refcount_dec_and_test(&kref->refcount)) {
-		release(kref);
-		return 1;
-	}
-	return 0;
-}
-
-static inline int kref_put_lock(struct kref *kref,
-				void (*release)(struct kref *kref),
-				SemaphoreHandle_t lock)
-{
-	if (refcount_dec_and_lock(&kref->refcount, lock)) {
 		release(kref);
 		return 1;
 	}
