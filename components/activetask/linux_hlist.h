@@ -15,7 +15,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-#if defined(INCLUDE_vTaskDelay)
+#if defined(CONFIG_FreeRTOS)
 #include "mbedtls/md5.h"
 #endif /* _ESP_PLATFORM */
 
@@ -307,7 +307,7 @@ static inline unsigned int hash_min(const char *val, size_t bits)
 {
     #if defined(__linux__) || defined(__linux)
 
-    #elif defined(INCLUDE_vTaskDelay)
+    #elif defined(CONFIG_FreeRTOS)
     mbedtls_md5_context ctx;
     unsigned char decrypt[16];
 

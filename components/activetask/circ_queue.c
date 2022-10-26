@@ -2,8 +2,8 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-22 17:57:36
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-24 20:34:07
- * @FilePath    : /active_task/src/circ_queue.c
+ * @LastEditTime: 2022-10-26 22:46:03
+ * @FilePath    : /activetask/components/activetask/circ_queue.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
@@ -27,7 +27,7 @@ static at_error_t dft_queue_push(circ_queue *pqueue, void *arg, int wait_ms)
 
     // got index to write
     ((void **)pqueue->_circ_buf.buf)[CIRC_GET_INDEX(&(pqueue->_circ_buf), index)] = arg;
-    KRNL_DEBUG("push queue %p pos %ld with %p\n",
+    KRNL_DEBUG("push queue %p pos %u with %p\n",
             pqueue, index & pqueue->_circ_buf.size, arg);
     return INNER_RES_OK;
 }
@@ -46,7 +46,7 @@ static at_error_t dft_queue_pop(circ_queue *pqueue, void **arg, int wait_ms)
 
     // got index to read
     *arg = ((void **)pqueue->_circ_buf.buf)[CIRC_GET_INDEX(&(pqueue->_circ_buf), index)];
-    KRNL_DEBUG("pop queue %p pos %ld with %p\n",
+    KRNL_DEBUG("pop queue %p pos %u with %p\n",
             pqueue, index & pqueue->_circ_buf.size, *arg);
     return INNER_RES_OK;
 }
@@ -54,7 +54,7 @@ static at_error_t dft_queue_pop(circ_queue *pqueue, void **arg, int wait_ms)
 circ_queue * circ_queue_create(size_t queue_length)
 {
     int upto2 = get_powerof2(queue_length);
-    KRNL_DEBUG("upto2 of %ld: %d\n", queue_length, upto2);
+    KRNL_DEBUG("upto2 of %u: %d\n", queue_length, upto2);
     if (0 == queue_length) return NULL;
     circ_queue *pqueue = (circ_queue *)malloc(sizeof(circ_queue));
     if (NULL == pqueue) return NULL;

@@ -13,6 +13,8 @@
 #include <stdio.h>
 
 #if defined(__linux__) || defined(__linux)
+#include <stdlib.h>
+
 #define INNER_RES_OK                0
 
 #define KRNL_DEBUG(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
@@ -20,14 +22,17 @@
 #define KRNL_WARN(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
 #define KRNL_ERROR(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
 
-#elif defined(INCLUDE_vTaskDelay)
-#include "esp_err.h"
-#define INNER_RES_OK                ESP_OK
+#elif defined(CONFIG_FreeRTOS)
 
 #include "esp_log.h"
 #include "esp_err.h"
 
-#define KRNL_TAG "App"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#define INNER_RES_OK                ESP_OK
+
+#define KRNL_TAG "KERNEL"
 #define KRNL_DEBUG(fmt, ...)  ESP_LOGD(KRNL_TAG, fmt, ##__VA_ARGS__)
 #define KRNL_INFO(fmt, ...)   ESP_LOGI(KRNL_TAG, fmt, ##__VA_ARGS__)
 #define KRNL_WARN(fmt, ...)   ESP_LOGW(KRNL_TAG, fmt, ##__VA_ARGS__)
@@ -119,9 +124,7 @@ static inline unsigned long get_sys_ms(void)
 }
 #endif
 
-#elif defined(INCLUDE_vTaskDelay)
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#elif defined(CONFIG_FreeRTOS)
 
 #define delay_ms(ms)    vTaskDelay(pdMS_TO_TICKS(ms))
 #define get_sys_ms()    pdTICKS_TO_MS(xTaskGetTickCount())

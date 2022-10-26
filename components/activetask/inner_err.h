@@ -14,7 +14,7 @@
 
 #if defined(__linux__) || defined(__linux)
 #define INNER_RES_OK                0
-#elif defined(INCLUDE_vTaskDelay)
+#elif defined(CONFIG_FreeRTOS)
 #include "esp_err.h"
 #define INNER_RES_OK                ESP_OK
 #endif /* _ESP_PLATFORM */

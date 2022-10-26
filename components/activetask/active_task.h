@@ -15,7 +15,7 @@
 
 #if defined(__linux__) || defined(__linux)
 #include <pthread.h>
-#elif defined(INCLUDE_vTaskDelay)
+#elif defined(CONFIG_FreeRTOS)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #endif /* _ESP_PLATFORM */
@@ -32,8 +32,8 @@ struct active_task_t {
     int                       priority;     // priority
 #if defined(__linux__) || defined(__linux)
     pthread_t             task_handler;
-#elif defined(INCLUDE_vTaskDelay)
-    void                 *task_handler;     // task handler
+#elif defined(CONFIG_FreeRTOS)
+    TaskHandle_t          task_handler;     // task handler
 #endif /* _ESP_PLATFORM */
     int                        core_id;     // cpu core id
     int                      interv_ms;

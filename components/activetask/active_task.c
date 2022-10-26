@@ -2,8 +2,8 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-24 17:29:26
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-26 10:17:12
- * @FilePath    : /active_task/src/active_task.c
+ * @LastEditTime: 2022-10-26 22:51:07
+ * @FilePath    : /activetask/components/activetask/active_task.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
@@ -22,7 +22,7 @@
 
 #if defined(__linux__) || defined(__linux)
 static void *dft_task_func(void *param)
-#elif defined(INCLUDE_vTaskDelay)
+#elif defined(CONFIG_FreeRTOS)
 static void dft_task_func(void *param)
 #endif /* _ESP_PLATFORM */
 {
@@ -32,7 +32,7 @@ static void dft_task_func(void *param)
     #if defined(__linux__) || defined(__linux)
     pthread_exit(NULL);
     return param;
-    #elif defined(INCLUDE_vTaskDelay)
+    #elif defined(CONFIG_FreeRTOS)
     vTaskDelete(NULL);
     #endif /* _ESP_PLATFORM */
 }
@@ -84,7 +84,7 @@ at_error_t dft_task_begin(active_task *task)
     pthread_setaffinity_np(task->task_handler, sizeof(mask), &mask);  //cpu core
 
     pthread_detach(task->task_handler);
-#elif defined(INCLUDE_vTaskDelay)
+#elif defined(CONFIG_FreeRTOS)
     // FreeRTOS task
     BaseType_t result = xTaskCreatePinnedToCore(dft_task_func, task->name,
             task->stack_depth, (void *)task, task->priority,
