@@ -1,66 +1,83 @@
 /*
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @Date        : 2022-10-17 19:50:59
+ * @Date        : 2022-10-23 11:47:23
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-18 21:02:26
- * @FilePath    : /activetask/components/activetask/data_blk.c
+ * @LastEditTime: 2022-10-24 17:14:07
+ * @FilePath    : /active_task/src/data_blk.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
+#include <stddef.h>
 #include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
+#include <stdlib.h>
+
+#include "linux_llist.h"
+#include "linux_macros.h"
+#include "inner_err.h"
+#include "linux_refcount.h"
 
 #include "data_blk.h"
 
-struct datablk_pool {
-    struct list_head         list_free;
-    struct list_head         list_used;
-    SemaphoreHandle_t            mutex;
+struct _inner_datablk {
+    int                      _capacity;
+    int                          _size;
+    bool                        _valid;
+    struct llist_node            _node;
+    void                        *_base;
+    struct kref               refcount;     // reference counter
+    datablk                      _dblk;
 };
 
-static struct datablk_pool gDataBlockPool;
+#define SIZE_INNER_DATABLK_HEAD    sizeof(struct _inner_datablk)
 
-static void datablk_fini(DataBlk pdblk)
-{
-    xSemaphoreTake(gDataBlockPool.mutex, portMAX_DELAY); // wait until success
+#define TO_INNER_DATABLK(dblk)  container_of(dblk, struct _inner_datablk, _dblk)
 
-    // xRingbufferReceiveUpTo(buf_handle, &item_size, pdMS_TO_TICKS(1000), sizeof(tx_item));
-    // vRingbufferReturnItem(gDataBlockPool.ringbuff, (void *)pdblk->base_ptr);
+struct _datablk_pool {
+    on_datablk_init              _init;
+    on_datablk_fini              _fini;
+    void                         *_arg;
+    struct llist_head data_stack[DATABLK_STACK_NUM];
+};
 
-    // return to free list
-    list_move_tail(&pdblk->node_datablk, &gDataBlockPool.list_free);
-    xSemaphoreGive(gDataBlockPool.mutex);    // give
-    free(pdblk->base_ptr);  // free mem for data
-}
+#define DATABLK_STACK_INDEX(blk) ((int)(((blk)->_capacity-1)/DATABLK_MIN_SIZE) < DATABLK_STACK_NUM \
+    ? (int)(((blk)->_capacity-1)/DATABLK_MIN_SIZE) : -1)
 
-static void __datablk_release(struct kref *ref)
-{
-    DataBlk dblk = container_of(ref, struct DataBlk_Stru, refcount);
-    datablk_fini(dblk);
-}
+static struct _datablk_pool g_datablk_pool;
 
 /***
  * @description : init data block pool
- * @param        {size_t} max_num - maximum number of data block
- * @param        {size_t} buff_size - total buff size for data
+ * @param        {on_int} init_func - callback function after data block malloc
+ * @param        {on_datablk_fini} fini_func - callback function before data block release
+ * @param        {void} *arg - user defined parameter for callback function
  * @return       {*}
  */
-esp_err_t datablk_pool_init(size_t max_num, size_t buff_size)
+at_error_t datablk_pool_init(on_datablk_init init_func, on_datablk_fini fini_func, void *arg)
 {
-    INIT_LIST_HEAD(&gDataBlockPool.list_free);
-    INIT_LIST_HEAD(&gDataBlockPool.list_used);
-    gDataBlockPool.mutex = xSemaphoreCreateMutex();
-    assert("Failed to create mutex for data block pool" \
-            && NULL != gDataBlockPool.mutex);
-    for (int i = 0; i < max_num; i++)
-    {
-        DataBlk dblk = (DataBlk)malloc(SIZE_DATABLK);
-        assert("Failed to malloc mem for data block" && NULL != dblk);
-        datablk_init(dblk);
-        list_add(&dblk->node_datablk, &gDataBlockPool.list_free);
+    memset(&g_datablk_pool, 0, sizeof(g_datablk_pool));
+    for (int i = 0; i < DATABLK_STACK_NUM; i++) {
+        g_datablk_pool.data_stack[i].first = NULL;
+        int blk_num = NO_LESS_THAN(DATABLK_NUM >> i, 2);     // decrease blk num to half
+        int blk_cap = DATABLK_MIN_SIZE * (i + 1);
+        struct _inner_datablk *blk = NULL;
+        for (int j = 0; j < blk_num; j++) {
+            blk = (struct _inner_datablk *)malloc(blk_cap + SIZE_INNER_DATABLK_HEAD);
+            if (NULL == blk) return MEMORY_MALLOC_FAILED;
+            blk->_capacity = blk_cap;
+            blk->_size = 0;
+            blk->_valid = false;
+            blk->_base = (void *)blk + SIZE_INNER_DATABLK_HEAD;
+            blk->_dblk.rd_ptr = blk->_dblk.wr_ptr = blk->_base;
+            kref_init(&blk->refcount);
+            blk->_dblk.data_type = -1;
+            INIT_LIST_HEAD(&blk->_dblk.node_msgdata);
+            llist_add(&blk->_node, &g_datablk_pool.data_stack[i]);
+        }
     }
-    return true;
+    g_datablk_pool._init = init_func;
+    g_datablk_pool._fini = fini_func;
+    g_datablk_pool._arg = arg;
+    KRNL_DEBUG("data block pool init\n");
+    return INNER_RES_OK;
 }
 
 /***
@@ -69,143 +86,183 @@ esp_err_t datablk_pool_init(size_t max_num, size_t buff_size)
  */
 void datablk_pool_fini(void)
 {
-    // clear used list
-    if (!list_empty(&gDataBlockPool.list_used)) {
-        DataBlk dblk, temp;
-        list_for_each_entry_safe(dblk, temp,
-                &gDataBlockPool.list_used, node_datablk) {
-            datablk_fini(dblk); // return to free list
+    for (int i = 0; i < DATABLK_STACK_NUM; i++) {
+        struct llist_node *node = NULL;
+        while (NULL != (node = llist_del_first(&g_datablk_pool.data_stack[i]))) {
+            struct _inner_datablk *blk = container_of(node, struct _inner_datablk, _node);
+            free(blk);
         }
     }
-
-    // clear free list
-    if (!list_empty(&gDataBlockPool.list_free)) {
-        DataBlk dblk, temp;
-        list_for_each_entry_safe(dblk, temp,
-                &gDataBlockPool.list_free, node_datablk) {
-            list_del(&dblk->node_datablk);
-            free(dblk);
-        }
-    }
-
-    vSemaphoreDelete(gDataBlockPool.mutex);
+    KRNL_DEBUG("data block pool fini\n");
 }
 
 /***
  * @description : malloc data block
- * @param        {DataBlk} *ppdblk - pointer to a data block pointer
- * @param        {size_t} data_size - size of data to be stored
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*}
+ * @param        {int} size - desired size of data block
+ * @return       {*} - pointer to data block, got NULL if failed
  */
-esp_err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms)
+datablk * datablk_malloc(int size)
 {
-    if (0 == data_size || NULL == ppdblk) return INNER_INVAILD_PARAM;
+    int stack_index = (int)((size-1)/DATABLK_MIN_SIZE) < DATABLK_STACK_NUM \
+            ? (int)((size-1)/DATABLK_MIN_SIZE) : -1;
+    KRNL_DEBUG("malloc size %d, stack %d\n", size, stack_index);
+    if (-1 == stack_index) return NULL;
 
-    char *buff = (char *)malloc(data_size);
-    if (NULL == buff) return DATABLK_FAILED_MALLOC;
-
-    if (pdTRUE == xSemaphoreTake(gDataBlockPool.mutex,
-                        pdMS_TO_TICKS(wait_ms))) {
-        // got counting
-        if (list_empty(&gDataBlockPool.list_free))
-        {
-            free(buff);
-            return DATABLK_FAILED_MALLOC;
-        }
-
-        DataBlk dblk = list_first_entry(&gDataBlockPool.list_free,
-                            struct DataBlk_Stru, node_datablk);
-        // move to used list
-        list_move_tail(&dblk->node_datablk, &gDataBlockPool.list_used);
-        xSemaphoreGive(gDataBlockPool.mutex);    // give
-        datablk_init(dblk);  // init data block
-        dblk->base_ptr = dblk->rd_ptr = dblk->wr_ptr = (unsigned char *)buff;
-        dblk->buff_size = data_size;
-        *ppdblk = dblk;
-        return ESP_OK;
-    } else {
-        free(buff);
-        return MALLOC_WAIT_TIMEOUT;
+    // find possible stack
+    for (; stack_index < DATABLK_STACK_NUM; stack_index++) {
+        if (!llist_empty(&g_datablk_pool.data_stack[stack_index])) break;
+        else KRNL_DEBUG("malloc size %d, stack %d empty\n", size, stack_index);
     }
+    KRNL_DEBUG("malloc size %d, serached stack %d\n", size, stack_index);
+    if (DATABLK_STACK_NUM <= stack_index) return NULL;
+
+    struct llist_node *node = llist_del_first(
+                &g_datablk_pool.data_stack[stack_index]);
+    if (NULL == node) return NULL;
+    struct _inner_datablk *blk = container_of(node, struct _inner_datablk, _node);
+    KRNL_DEBUG("malloc size %d, serached stack %d, node %p, data %p, blk %p, cap %d\n",
+            size, stack_index, node, &blk->_dblk, blk, blk->_capacity);
+    blk->_size = size;
+    blk->_valid = false;
+    INIT_LIST_HEAD(&blk->_dblk.node_msgdata);
+    blk->_dblk.data_type = -1;
+    kref_init(&blk->refcount);  // reset reference to 1
+    blk->_dblk.rd_ptr = blk->_dblk.wr_ptr = blk->_base;
+    memset(blk->_base, 0, blk->_capacity);
+    KRNL_DEBUG("===malloc size %d, serached stack %d, node %p, data %p, blk %p, cap %d\n",
+            size, stack_index, node, &blk->_dblk, blk, blk->_capacity);
+    if (NULL != g_datablk_pool._init)
+        if (INNER_RES_OK != g_datablk_pool._init(&blk->_dblk, g_datablk_pool._arg))
+        {
+            datablk_free(&blk->_dblk);
+            return NULL;
+        }
+    return &blk->_dblk;
+}
+
+static void __datablk_release(struct kref *ref)
+{
+    struct _inner_datablk *blk = container_of(ref, struct _inner_datablk, refcount);
+    if (NULL != g_datablk_pool._fini)
+        g_datablk_pool._fini(&blk->_dblk, g_datablk_pool._arg);
+
+    KRNL_DEBUG("free size %d, stack %d, node %p, data %p, blk %p, cap %d\n",
+            blk->_size, DATABLK_STACK_INDEX(blk), &blk->_node, &blk->_dblk, blk, blk->_capacity);
+    blk->_size = 0;
+    blk->_valid = false;
+    INIT_LIST_HEAD(&blk->_dblk.node_msgdata);
+    llist_add(&blk->_node, &g_datablk_pool.data_stack[DATABLK_STACK_INDEX(blk)]);
 }
 
 /***
- * @description : recyle data block
- * @param        {DataBlk} pdblk - pinter to a data block
+ * @description : clear data block, decrease reference
+ *                  data block would be release if reference = 0
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-esp_err_t datablk_free(DataBlk pdblk)
+void datablk_free(datablk *db)
 {
-    if (NULL == pdblk) return ESP_OK;
+    if (NULL == db) return;
+
+    struct _inner_datablk *blk = container_of(db, struct _inner_datablk, _dblk);
     // decrease reference, if 0 recycle with fini
-    kref_put(&pdblk->refcount, __datablk_release);  // decrease reference
-    return ESP_OK;
+    kref_put(&blk->refcount, __datablk_release);  // decrease reference
 }
 
 /***
- * @description : increase reference of a data block
- * @param        {DataBlk} pdblk - pointer to a data block
+ * @description : set valid flag of data block
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-void datablk_ref(DataBlk pdblk)
+void datablk_set_valid(datablk *db)
 {
-    kref_get(&pdblk->refcount);   // increase reference
+    if (NULL == db) return;
+    (container_of(db, struct _inner_datablk, _dblk))->_valid = true;
 }
 
 /***
- * @description : init a data block
- * @param        {DataBlk} pdblk - pinter to a data block
+ * @description : check valida flag
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-void datablk_init(DataBlk pdblk)
+bool datablk_is_valid(datablk *db)
 {
-    if (NULL == pdblk) return;
-    INIT_LIST_HEAD(&pdblk->node_msgdata);
-    pdblk->data_type = -1;
-    kref_init(&pdblk->refcount);  // reset reference to 1
-    pdblk->buff_size = 0;
-    pdblk->base_ptr = pdblk->rd_ptr = pdblk->wr_ptr = NULL;
+    if (NULL == db) return false;
+    return (container_of(db, struct _inner_datablk, _dblk))->_valid;
 }
 
 /***
- * @description : read from a data block to a buffer
- * @param        {DataBlk} pdblk - pointer to a data block
- * @param        {void} *buff - pointer to buffer
- * @param        {size_t} *psize - pointer to size to be readed
- * @return       {*} bytes readed in psize
+ * @description : increase reference of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
  */
-esp_err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize)
+void datablk_ref(datablk *db)
 {
-    if (NULL == buff || NULL == psize || 0 == *psize)
-        return INNER_INVAILD_PARAM;
-
-    size_t count = datablk_count(pdblk);
-    count = count > *psize ? *psize : count;
-
-    memcpy(buff, pdblk->rd_ptr, count);
-    pdblk->rd_ptr += count;
-    *psize = count;
-    return ESP_OK;
+    if (NULL == db) return;
+    kref_get(&(container_of(db, struct _inner_datablk, _dblk))->refcount);
 }
 
 /***
- * @description : write to a data block from a buffer
- * @param        {DataBlk} pdblk - pointer to a data block
- * @param        {void} *buff - pointer to buffer
- * @param        {size_t} *psize - pointer to size to be wrote
- * @return       {*} bytes wrote in psize
+ * @description : get capacity of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
  */
-esp_err_t datablk_write(DataBlk pdblk, void *buff, size_t *psize)
+int datablk_get_cap(datablk *db)
 {
-    if (NULL == buff || NULL == psize || 0 == *psize)
-        return INNER_INVAILD_PARAM;
+    if (NULL == db) return -1;
+    return (container_of(db, struct _inner_datablk, _dblk))->_capacity;
+}
 
-    size_t len = datablk_space(pdblk);
-    len = len > *psize ? *psize : len;
+/***
+ * @description : get size of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
+ */
+int datablk_get_size(datablk *db)
+{
+    if (NULL == db) return -1;
+    return (container_of(db, struct _inner_datablk, _dblk))->_size;
+}
 
-    memcpy(pdblk->wr_ptr, buff, len);
-    pdblk->wr_ptr += len;
-    *psize = len;
-    return ESP_OK;
+/***
+ * @description : get base address of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
+ */
+void *datablk_get_base(datablk *db)
+{
+    if (NULL == db) return NULL;
+    return (container_of(db, struct _inner_datablk, _dblk))->_base;
+}
+
+/***
+ * @description : move read ptr with n bytes
+ * @param        {datablk} *db - pointer to data block
+ * @param        {int} nbytes - bytes
+ * @return       {*} - return length if n > length
+ */
+int datablk_move_rd(datablk *db, int nbytes)
+{
+    if (NULL == db) return -1;
+
+    int n = nbytes > datablk_length(db) ? datablk_length(db) : nbytes;
+
+    db->rd_ptr += n;
+    return n;
+}
+
+/***
+ * @description : move write ptr with n bytes
+ * @param        {datablk} *db - pointer to data block
+ * @param        {int} nbytes - bytes
+ * @return       {*} - return space if n > space
+ */
+int datablk_move_wr(datablk *db, int nbytes)
+{
+    if (NULL == db) return -1;
+
+    int n = nbytes > datablk_space(db) ? datablk_space(db) : nbytes;
+
+    db->wr_ptr += n;
+    return n;
 }

@@ -1,252 +1,270 @@
 /*
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @Date        : 2022-10-17 19:51:34
+ * @Date        : 2022-10-23 23:27:52
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-18 21:05:07
- * @FilePath    : /activetask/components/activetask/msg_blk.c
+ * @LastEditTime: 2022-10-24 17:14:40
+ * @FilePath    : /active_task/src/msg_blk.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/portmacro.h"
+#include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "linux_llist.h"
+#include "linux_macros.h"
+#include "inner_err.h"
+#include "linux_refcount.h"
 
 #include "msg_blk.h"
 
-struct msgblk_pool {
-    struct list_head         list_free;
-    struct list_head         list_used;
-    SemaphoreHandle_t            mutex;
+struct _inner_msgblk {
+    bool                        _valid;
+    struct llist_node            _node;
+    struct kref               refcount;     // reference counter
+    msgblk                       _mblk;
 };
 
-static struct msgblk_pool gMsgBlockPool;
+#define SIZE_INNER_MSGBLK_HEAD    sizeof(struct _inner_msgblk)
 
-static void msgblk_fini(MsgBlk pmsgblk)
-{
-    // clear data block
-    if (!list_empty(&pmsgblk->list_datablk)) {
-        DataBlk dblk, temp;
-        list_for_each_entry_safe(dblk, temp,
-                &pmsgblk->list_datablk, node_msgdata) {
-            datablk_free(dblk);
-        }
-    }
+#define TO_INNER_MSGBLK(mblk)  container_of(dblk, struct _inner_msgblk, _mblk)
 
-    xSemaphoreTake(gMsgBlockPool.mutex, portMAX_DELAY); // wait until success
-    // return to free list
-    list_move_tail(&pmsgblk->node_msgblk, &gMsgBlockPool.list_free);
-    xSemaphoreGive(gMsgBlockPool.mutex);    // give
-}
+struct _msgblk_pool {
+    on_msgblk_init               _init;
+    on_msgblk_fini               _fini;
+    on_datablk_attach          _attach;
+    on_datablk_dettach        _dettach;
+    void                         *_arg;
+    struct llist_head        msg_stack;
+};
 
-static void __msgblk_release(struct kref *ref)
-{
-    MsgBlk mblk = container_of(ref, struct MsgBlk_Stru, refcount);
-    msgblk_fini(mblk);
-}
+static struct _msgblk_pool g_msgblk_pool;
 
 /***
- * @description : init message block pool
- * @param        {size_t} max_num - maximum number of message block in the pool
- * @return       {*} result of init
+ * @description : init msg block pool
+ * @param        {on_msgblk_init} init_func - callback function after msg block malloc
+ * @param        {on_msgblk_fini} fini_func - callback function before msg block release
+ * @param        {on_datablk_attach} attch_func - callback function after data block attach
+ * @param        {on_datablk_dettach} dettach_func - callback function before data block dettach
+ * @param        {void} *arg - user defined parameter for callback function
+ * @return       {*}
  */
-esp_err_t msgblk_pool_init(size_t max_num)
+at_error_t msgblk_pool_init(on_msgblk_init init_func, on_msgblk_fini fini_func,
+        on_datablk_attach attch_func, on_datablk_dettach dettach_func, void *arg)
 {
-    INIT_LIST_HEAD(&gMsgBlockPool.list_free);
-    INIT_LIST_HEAD(&gMsgBlockPool.list_used);
-    gMsgBlockPool.mutex = xSemaphoreCreateMutex();
-    assert("Failed to create mutex for message block pool" \
-            && NULL != gMsgBlockPool.mutex);
-    for (int i = 0; i < max_num; i++)
-    {
-        MsgBlk mblk = (MsgBlk)malloc(SIZE_MSGBLK);
-        assert("Failed to malloc mem for message block" && NULL != mblk);
-        msgblk_init(mblk);
-        list_add(&mblk->node_msgblk, &gMsgBlockPool.list_free);
+    memset(&g_msgblk_pool, 0, sizeof(g_msgblk_pool));
+    g_msgblk_pool.msg_stack.first = NULL;
+    int blk_num = NO_LESS_THAN(MSGBLK_NUM, 2);
+    struct _inner_msgblk *blk = NULL;
+    for (int j = 0; j < blk_num; j++) {
+        blk = (struct _inner_msgblk *)malloc(SIZE_INNER_MSGBLK_HEAD);
+        if (NULL == blk) return MEMORY_MALLOC_FAILED;
+        blk->_valid = false;
+        kref_init(&blk->refcount);
+        blk->_mblk.msg_type = -1;
+        INIT_LIST_HEAD(&blk->_mblk.list_datablk);
+        llist_add(&blk->_node, &g_msgblk_pool.msg_stack);
     }
-    return ESP_OK;
+    g_msgblk_pool._init = init_func;
+    g_msgblk_pool._fini = fini_func;
+    g_msgblk_pool._attach = attch_func;
+    g_msgblk_pool._dettach = dettach_func;
+    g_msgblk_pool._arg = arg;
+    KRNL_DEBUG("msg block pool init\n");
+    return INNER_RES_OK;
 }
 
 /***
- * @description : clear message block pool
+ * @description : clear msg block pool
  * @return       {*}
  */
 void msgblk_pool_fini(void)
 {
-    // clear used list
-    if (!list_empty(&gMsgBlockPool.list_used)) {
-        MsgBlk mblk, temp;
-        list_for_each_entry_safe(mblk, temp,
-                &gMsgBlockPool.list_used, node_msgblk) {
-            msgblk_fini(mblk);  // return to free list
-        }
+    struct llist_node *node = NULL;
+    while (NULL != (node = llist_del_first(&g_msgblk_pool.msg_stack))) {
+        struct _inner_msgblk *blk = container_of(node, struct _inner_msgblk, _node);
+        free(blk);
     }
-
-    // clear free list
-    if (!list_empty(&gMsgBlockPool.list_free)) {
-        MsgBlk mblk, temp;
-        list_for_each_entry_safe(mblk, temp,
-                &gMsgBlockPool.list_free, node_msgblk) {
-            list_del(&mblk->node_msgblk);
-            free(mblk);
-        }
-    }
-
-    vSemaphoreDelete(gMsgBlockPool.mutex);
+    KRNL_DEBUG("msg block pool fini\n");
 }
 
 /***
- * @description : malloc a message block
- * @param        {MsgBlk} *ppmsgblk - pointer to a message block pointer
- * @param        {DataBlk} dblk - message data block which would
- *                      attach to this message block
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*} result of malloc
+ * @description : malloc msg block with a data block attached
+ * @param        {msgblk} *db - pointer to data block attached
+ * @return       {*} - pointer to msg block, got NULL if failed
  */
-esp_err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk,
-        uint32_t wait_ms)
+msgblk * msgblk_malloc(datablk *db)
 {
-    if (pdTRUE == xSemaphoreTake(gMsgBlockPool.mutex,
-                        pdMS_TO_TICKS(wait_ms))) {
-        // got counting
-        if (list_empty(&gMsgBlockPool.list_free))
-            return MSGBLK_FAILED_MALLOC;
+    struct llist_node *node = llist_del_first(&g_msgblk_pool.msg_stack);
+    if (NULL == node) return NULL;
+    struct _inner_msgblk *blk = container_of(node, struct _inner_msgblk, _node);
+    KRNL_DEBUG("malloc node %p, msg %p, blk %p, data %p\n",
+            node, &blk->_mblk, blk, db);
+    blk->_valid = false;
+    INIT_LIST_HEAD(&blk->_mblk.list_datablk);
+    blk->_mblk.msg_type = -1;
+    kref_init(&blk->refcount);  // reset reference to 1
+    if (NULL != g_msgblk_pool._init)
+        if (INNER_RES_OK != g_msgblk_pool._init(&blk->_mblk, g_msgblk_pool._arg)) {
+            msgblk_free(&blk->_mblk);
+            return NULL;
+        }
 
-        MsgBlk mblk = list_first_entry(&gMsgBlockPool.list_free,
-                            struct MsgBlk_Stru, node_msgblk);
-        // move to used list
-        list_move_tail(&mblk->node_msgblk, &gMsgBlockPool.list_used);
-        xSemaphoreGive(gMsgBlockPool.mutex);    // give
-        msgblk_init(mblk);  // init message block
-        *ppmsgblk = mblk;
-        return msgblk_attach_dbllk(mblk, dblk);
-    } else {
-        return MALLOC_WAIT_TIMEOUT;
+    msgblk_attach_datablk(&blk->_mblk, db);
+    return &blk->_mblk;
+}
+
+static void __msgblk_release(struct kref *ref)
+{
+    struct _inner_msgblk *blk = container_of(ref, struct _inner_msgblk, refcount);
+    if (NULL != g_msgblk_pool._fini)
+        g_msgblk_pool._fini(&blk->_mblk, g_msgblk_pool._arg);
+
+    KRNL_DEBUG("free node %p, msg %p, blk %p\n",
+            &blk->_node, &blk->_mblk, blk);
+    blk->_valid = false;
+
+    // clear data block
+    if (!list_empty(&blk->_mblk.list_datablk)) {
+        datablk *dblk, *temp;
+        list_for_each_entry_safe(dblk, temp,
+                &blk->_mblk.list_datablk, node_msgdata) {
+            datablk_free(dblk);
+        }
     }
+    INIT_LIST_HEAD(&blk->_mblk.list_datablk);
+    llist_add(&blk->_node, &g_msgblk_pool.msg_stack);
 }
 
 /***
- * @description : free a message block
- * @param        {MsgBlk} pmsgblk - pointer to a message block
- * @return       {*} result of free
+ * @description : clear msg block, decrease reference
+ *                  msg block would be release if reference = 0
+ * @param        {msgblk} *mb - pointer to msg block
+ * @return       {*}
  */
-esp_err_t msgblk_free(MsgBlk pmsgblk)
+void msgblk_free(msgblk *mb)
 {
-    if (NULL == pmsgblk) return ESP_OK;
+    if (NULL == mb) return;
+
+    struct _inner_msgblk *blk = container_of(mb, struct _inner_msgblk, _mblk);
     // decrease reference, if 0 recycle with fini
-    kref_put(&pmsgblk->refcount, __msgblk_release);  // decrease reference
-    return ESP_OK;
+    kref_put(&blk->refcount, __msgblk_release);  // decrease reference
 }
 
 /***
- * @description : init message block
- * @param        {MsgBlk} pmsgblk - pointer to a message block
- * @return       {*} None
- */
-void msgblk_init(MsgBlk pmsgblk)
-{
-    if (NULL == pmsgblk) return;
-    INIT_LIST_HEAD(&pmsgblk->list_datablk);
-    pmsgblk->msg_type = -1;
-    kref_init(&pmsgblk->refcount);  // reset reference to 1
-}
-
-/***
- * @description : increase reference of a message block
- * @param        {MsgBlk} pmsgblk - pointer to a message block
+ * @description : set valid flag of msg block
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-void msgblk_refer(MsgBlk pmsgblk)
+void msgblk_set_valid(msgblk *mb)
 {
-    kref_get(&pmsgblk->refcount);   // increase reference
+    if (NULL == mb) return;
+    (container_of(mb, struct _inner_msgblk, _mblk))->_valid = true;
 }
 
 /***
- * @description : init message block queue
- * @param        {QueueHandle_t} *pqueue - pointer to queue
- * @param        {uint32_t} length - maxinum length of queue
- * @return       {*} result of init
- */
-esp_err_t msgblk_queue_init(QueueHandle_t *pqueue, uint32_t length)
-{
-    *pqueue = xQueueCreate(length, sizeof(MsgBlk));
-    return NULL != *pqueue ? ESP_OK : ESP_FAIL;
-}
-
-/***
- * @description : clear message block queue
- * @param        {QueueHandle_t} queue
+ * @description : check valida flag
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-void msgblk_queue_fini(QueueHandle_t queue)
+bool msgblk_is_valid(msgblk *mb)
 {
-    vQueueDelete(queue);
+    if (NULL == mb) return false;
+    return (container_of(mb, struct _inner_msgblk, _mblk))->_valid;
 }
 
 /***
- * @description : push a message block into a queue
- * @param        {QueueHandle_t} queue - queue for pushing
- * @param        {MsgBlk} pmsgblk - pointer to a message block
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*} result of push
- */
-esp_err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms)
-{
-    if (NULL == queue || NULL == pmsgblk) return INNER_INVAILD_PARAM;
-
-    msgblk_refer(pmsgblk);      // increase reference
-    return pdTRUE == xQueueSend(queue,
-                (void *)&pmsgblk, pdMS_TO_TICKS(wait_ms)) \
-            ? ESP_OK : MSGBLK_FAILED_PUSH;
-}
-
-/***
- * @description : pop a message block from a queue
- * @param        {QueueHandle_t} queue - queue for poping
- * @param        {MsgBlk} *ppmsgblk - pointer to a message block pointer
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*} result of pop
- */
-esp_err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms)
-{
-    if (NULL == queue || NULL == ppmsgblk) return INNER_INVAILD_PARAM;
-    return pdTRUE == xQueueReceive(queue,
-                (void *)ppmsgblk, pdMS_TO_TICKS(wait_ms)) \
-            ? ESP_OK : MSGBLK_FAILED_POP;
-}
-
-/***
- * @description : attach data block to a message block
- * @param        {MsgBlk} pmblk - pointer to a message block
- * @param        {DataBlk} pdblk - pointer to a data bock
+ * @description : increase reference of msg block
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-esp_err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk)
+void msgblk_ref(msgblk *mb)
 {
-    if (NULL == pmblk || NULL == pdblk) return INNER_INVAILD_PARAM;
-    datablk_ref(pdblk);     // increase reference
-    list_add_tail(&pdblk->node_msgdata, &pmblk->list_datablk);  // attach
-    return ESP_OK;
+    if (NULL == mb) return;
+    kref_get(&(container_of(mb, struct _inner_msgblk, _mblk))->refcount);
 }
 
 /***
- * @description : detach data block from a message bock
- * @param        {MsgBlk} pmblk
- * @param        {DataBlk} pdblk
+ * @description : attach data block to msg block
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-esp_err_t msgblk_detach_dbllk(MsgBlk pmblk, DataBlk pdblk)
+at_error_t msgblk_attach_datablk(msgblk *mb, datablk *db)
 {
-    if (NULL == pmblk || NULL == pdblk) return INNER_INVAILD_PARAM;
-    DataBlk pos;
-    list_for_each_entry(pos, &pmblk->list_datablk, node_msgdata)
+    if (NULL == mb || NULL == db) return INNER_INVAILD_PARAM;
+    if (NULL != g_msgblk_pool._attach) {
+        int res = g_msgblk_pool._attach(mb, db, g_msgblk_pool._arg);
+        if (INNER_RES_OK != res) return res;
+    }
+    datablk_ref(db);     // increase reference
+    list_add_tail(&db->node_msgdata, &mb->list_datablk);  // attach
+    return INNER_RES_OK;
+}
+
+/***
+ * @description : dettach data block from msg block
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
+ */
+void msgblk_dettach_datablk(msgblk *mb, datablk *db)
+{
+    if (NULL == mb || NULL == db) return;
+
+    datablk *pos;
+    list_for_each_entry(pos, &mb->list_datablk, node_msgdata)
     {
-        if (pos == pdblk)
+        if (pos == db)
         {
             // found & del
-            list_del(&pdblk->node_msgdata);
-            datablk_free(pdblk);
-            return ESP_OK;
+            list_del(&db->node_msgdata);
+            datablk_free(db);
+            if (NULL != g_msgblk_pool._dettach) {
+                g_msgblk_pool._dettach(mb, db, g_msgblk_pool._arg);
+            }
+            return;
         }
     }
-    return INNER_ITEM_NOT_FOUND;
+}
+
+/***
+ * @description : push msg block in a circular queue
+ * @param        {circ_queue} *queue - pointer to queue
+ * @param        {msgblk} *mb - poiner to msg block
+ * @param        {int} wait_ms - wait time in ms
+ * @return       {*}
+ */
+at_error_t msgblk_push_circ_queue(circ_queue *queue, msgblk *mb, int wait_ms)
+{
+    if (NULL == queue || NULL == mb) return INNER_INVAILD_PARAM;
+    msgblk_ref(mb);
+    return queue->queue_push(queue, (void *)mb, wait_ms);
+}
+
+/***
+ * @description : pop msg block from a circular queue
+ * @param        {circ_queue} *queue - pointer to queue
+ * @param        {msgblk} **pmb - pointer to msg block pointer
+ * @param        {int} wait_ms - wait time in ms
+ * @return       {*}
+ */
+at_error_t msgblk_pop_circ_queue(circ_queue *queue, msgblk **pmb, int wait_ms)
+{
+    if (NULL == queue || NULL == pmb) return INNER_INVAILD_PARAM;
+    return queue->queue_pop(queue, (void **)pmb, wait_ms);
+}
+
+/***
+ * @description : get first data block from message block
+ * @param        {msgblk} *mb - pointer to message block
+ * @return       {*}
+ */
+datablk *msgblk_first_datablk(msgblk *mb)
+{
+    if (NULL == mb) return NULL;
+
+    if (list_empty(&mb->list_datablk)) return NULL;
+
+    return list_first_entry(&mb->list_datablk, datablk, node_msgdata);
 }

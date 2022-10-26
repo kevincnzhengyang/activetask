@@ -12,6 +12,8 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <limits.h>
 #include <stdatomic.h>
 
 #ifdef __cplusplus

@@ -12,8 +12,10 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <limits.h>
 #include <stdatomic.h>
-#include "linux_container_of.h"
+#include "linux_macros.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -199,14 +201,14 @@ static inline bool __llist_add_batch(struct llist_node *new_first,
  *
  * Returns true if the list was empty prior to adding this entry.
  */
-static inline bool llist_add(struct llist_node *new, struct llist_head *head)
+static inline bool llist_add(struct llist_node *new_node, struct llist_head *head)
 {
-	return llist_add_batch(new, new, head);
+	return llist_add_batch(new_node, new_node, head);
 }
 
-static inline bool __llist_add(struct llist_node *new, struct llist_head *head)
+static inline bool __llist_add(struct llist_node *new_node, struct llist_head *head)
 {
-	return __llist_add_batch(new, new, head);
+	return __llist_add_batch(new_node, new_node, head);
 }
 
 /**

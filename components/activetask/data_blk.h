@@ -1,60 +1,86 @@
 /***
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @Date        : 2022-10-17 19:50:43
+ * @Date        : 2022-10-23 10:37:42
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-17 19:50:43
- * @FilePath    : /activetask/components/activetask/data_blk.h
- * @Description :
+ * @LastEditTime: 2022-10-23 10:37:42
+ * @FilePath    : /active_task/include/data_blk.h
+ * @Description : data block
  * @Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
 #ifndef _DATA_BLOCK_H_
 #define _DATA_BLOCK_H_
 
-#include <stddef.h>
-#include <stdint.h>
-
-#include "freertos/FreeRTOS.h"
-#include "esp_system.h"
-#include "esp_err.h"
-
 #include "inner_err.h"
+#include "linux_macros.h"
 #include "linux_list.h"
-#include "linux_refcount.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef DATABLK_MIN_SIZE
+#define DATABLK_MIN_SIZE    32
+#endif /* DATABLK_MIN_SIZE */
 
-struct DataBlk_Stru {
-    int32_t                  data_type;
+#ifndef DATABLK_NUM
+#define DATABLK_NUM     8
+#endif /* DATABLK_NUM */
+
+#ifndef DATABLK_STACK_NUM
+#define DATABLK_STACK_NUM    3
+#endif /* DATABLK_STACK_NUM */
+
+struct datablk_t {
+    int                      data_type;
+    void                       *rd_ptr;
+    void                       *wr_ptr;
     struct list_head      node_msgdata;     // node for message block
-    struct list_head      node_datablk;     // node of data block
-    struct kref               refcount;     // reference counter
-    size_t                   buff_size;
-    unsigned char            *base_ptr;
-    unsigned char              *rd_ptr;
-    unsigned char              *wr_ptr;
 };
 
-#define SIZE_DATABLK     sizeof(struct DataBlk_Stru)
+#define SIZE_DATA_BLOCK_HEADER  sizeof(struct datablk_t)
 
-typedef struct DataBlk_Stru * DataBlk;
+typedef struct datablk_t datablk;
 
-#define datablk_is_empty(dblk) ((dblk)->rd_ptr == (dblk)->wr_ptr)
+/*
+ * get the length of data to be handled, bytes between write and read pointer
+ */
+#define datablk_length(db)  ((db)->wr_ptr - (db)->rd_ptr)
 
-#define datablk_is_full(dblk) ((dblk)->buff_size == ((dblk)->wr_ptr - (dblk)->base))
+/*
+ * get the length of data ignored, bytes before read pointer
+ */
+#define datablk_ignored(db)  ((db)->rd_ptr - datablk_get_base(db))
 
-#define datablk_count(dblk) ((dblk)->wr_ptr - (dblk)->rd_ptr)
+/*
+ * get the length of data ocupied, bytes before write pointer
+ */
+#define datablk_ocupied(db)   ((db)->wr_ptr - datablk_get_base(db))
 
-#define datablk_space(dblk) ((dblk)->buff_size - ((dblk)->wr_ptr - (dblk)->base_ptr))
+/*
+ * get the length of space, bytes after write pinter
+ */
+#define datablk_space(db)  (datablk_get_size(db) - datablk_ocupied(db))
+
+/***
+ * @description : callback function after datablk malloc success
+ * @param        {datablk} *db - pointer to data block
+ * @param        {void} *arg - user defined parameter
+ * @return       {*} - not INNER_RES_OK result lead to malloc failed with NULL
+ */
+typedef at_error_t (*on_datablk_init)(datablk *db, void *arg);
+
+/***
+ * @description : callback function before datablk release
+ * @param        {datablk} *db - pointer to data block
+ * @param        {void} *arg - user defined parameter
+ * @return       {*}
+ */
+typedef void (*on_datablk_fini)(datablk *db, void *arg);
 
 /***
  * @description : init data block pool
- * @param        {size_t} max_num - maximum number of data block
- * @param        {size_t} buff_size - total buff size for data
+ * @param        {on_datablk_init} init_func - callback function after data block malloc
+ * @param        {on_datablk_fini} fini_func - callback function before data block release
+ * @param        {void} *arg - user defined parameter for callback function
  * @return       {*}
  */
-esp_err_t datablk_pool_init(size_t max_num, size_t buff_size);
+at_error_t datablk_pool_init(on_datablk_init init_func, on_datablk_fini fini_func, void *arg);
 
 /***
  * @description : clear data block pool
@@ -64,54 +90,75 @@ void datablk_pool_fini(void);
 
 /***
  * @description : malloc data block
- * @param        {DataBlk} *ppdblk - pointer to a data block pointer
- * @param        {size_t} data_size - size of data to be stored
- * @param        {uint32_t} wait_ms - wait time in ms
+ * @param        {int} size - desired size of data block
+ * @return       {*} - pointer to data block, got NULL if failed
+ */
+datablk * datablk_malloc(int size);
+
+/***
+ * @description : clear data block, decrease reference
+ *                  data block would be release if reference = 0
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-esp_err_t datablk_malloc(DataBlk *ppdblk, size_t data_size, uint32_t wait_ms);
+void datablk_free(datablk *db);
 
 /***
- * @description : recyle data block
- * @param        {DataBlk} pdblk - pinter to a data block
+ * @description : set valid flag of data block
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-esp_err_t datablk_free(DataBlk pdblk);
+void datablk_set_valid(datablk *db);
 
 /***
- * @description : init a data block
- * @param        {DataBlk} pdblk - pinter to a data block
+ * @description : check valida flag
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-void datablk_init(DataBlk pdblk);
+bool datablk_is_valid(datablk *db);
 
 /***
- * @description : increase reference of a data block
- * @param        {DataBlk} pdblk - pointer to a data block
+ * @description : increase reference of data block
+ * @param        {datablk} *db - pointer to data block
  * @return       {*}
  */
-void datablk_ref(DataBlk pdblk);
+void datablk_ref(datablk *db);
 
 /***
- * @description : read from a data block to a buffer
- * @param        {DataBlk} pdblk - pointer to a data block
- * @param        {void} *buff - pointer to buffer
- * @param        {size_t} *psize - pointer to size to be readed
- * @return       {*} bytes readed in psize
+ * @description : get capacity of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
  */
-esp_err_t datablk_read(DataBlk pdblk, void *buff, size_t *psize);
+int datablk_get_cap(datablk *db);
 
 /***
- * @description : write to a data block from a buffer
- * @param        {DataBlk} pdblk - pointer to a data block
- * @param        {void} *buff - pointer to buffer
- * @param        {size_t} *psize - pointer to size to be wrote
- * @return       {*} bytes wrote in psize
+ * @description : get size of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
  */
-esp_err_t datablk_write(DataBlk pdblk, void *buff, size_t *psize);
+int datablk_get_size(datablk *db);
 
-#ifdef __cplusplus
-}
-#endif
+/***
+ * @description : get base address of data block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
+ */
+void *datablk_get_base(datablk *db);
+
+/***
+ * @description : move read ptr with n bytes
+ * @param        {datablk} *db - pointer to data block
+ * @param        {int} nbytes - bytes
+ * @return       {*} - return length if n > length
+ */
+int datablk_move_rd(datablk *db, int nbytes);
+
+/***
+ * @description : move write ptr with n bytes
+ * @param        {datablk} *db - pointer to data block
+ * @param        {int} nbytes - bytes
+ * @return       {*} - return space if n > space
+ */
+int datablk_move_wr(datablk *db, int nbytes);
 
 #endif /* _DATA_BLOCK_H_ */

@@ -1,139 +1,162 @@
 /***
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @Date        : 2022-10-17 19:51:26
+ * @Date        : 2022-10-23 23:27:42
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-17 19:51:26
- * @FilePath    : /activetask/components/activetask/msg_blk.h
- * @Description : message block based on FreeRTOS Ring Buffer
+ * @LastEditTime: 2022-10-23 23:27:42
+ * @FilePath    : /active_task/include/msg_blk.h
+ * @Description : message block
  * @Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
  */
 #ifndef _MESSAGE_BLOCK_H_
 #define _MESSAGE_BLOCK_H_
 
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
-
-#include "esp_err.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-
 #include "inner_err.h"
+#include "linux_macros.h"
 #include "linux_list.h"
-#include "linux_refcount.h"
+#include "circ_queue.h"
 #include "data_blk.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef MSGBLK_NUM
+#define MSGBLK_NUM     8
+#endif /* MSGBLK_NUM */
 
-struct MsgBlk_Stru {
-    int32_t                   msg_type;     // message type
+struct msgblk_t {
+    int                       msg_type;
     struct list_head      list_datablk;     // message datablock list
-    struct list_head       node_msgblk;     // node of message block
-    struct kref               refcount;     // reference counter
 };
 
-#define SIZE_MSGBLK     sizeof(struct MsgBlk_Stru)
+#define SIZE_MSG_BLOCK_HEADER  sizeof(struct msgblk_t)
 
-typedef struct MsgBlk_Stru * MsgBlk;
+typedef struct msgblk_t msgblk;
 
 /***
- * @description : init message block pool
- * @param        {size_t} max_num - maximum number of message block in the pool
- * @return       {*} result of init
+ * @description : callback function after msgblk malloc success
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {void} *arg - user defined parameter
+ * @return       {*} - not INNER_RES_OK result lead to malloc failed with NULL
  */
-esp_err_t msgblk_pool_init(size_t max_num);
+typedef at_error_t (*on_msgblk_init)(msgblk *mb, void *arg);
 
 /***
- * @description : clear message block pool
+ * @description : callback function before msgblk release
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {void} *arg - user defined parameter
+ * @return       {*}
+ */
+typedef void (*on_msgblk_fini)(msgblk *mb, void *arg);
+
+/***
+ * @description : callback function after attach datablk
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {datablk} *db - pointer to msg block
+ * @param        {void} *arg - user defined parameter
+ * @return       {*} - not INNER_RES_OK result lead to malloc failed to attach
+ */
+typedef at_error_t (*on_datablk_attach)(msgblk *mb, datablk *db, void *arg);
+
+/***
+ * @description : callback function before dettach datablk
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {datablk} *db - pointer to msg block
+ * @param        {void} *arg - user defined parameter
+ * @return       {*}
+ */
+typedef void (*on_datablk_dettach)(msgblk *mb, datablk *db, void *arg);
+
+/***
+ * @description : init msg block pool
+ * @param        {on_msgblk_init} init_func - callback function after msg block malloc
+ * @param        {on_msgblk_fini} fini_func - callback function before msg block release
+ * @param        {on_datablk_attach} attch_func - callback function after data block attach
+ * @param        {on_datablk_dettach} dettach_func - callback function before data block dettach
+ * @param        {void} *arg - user defined parameter for callback function
+ * @return       {*}
+ */
+at_error_t msgblk_pool_init(on_msgblk_init init_func, on_msgblk_fini fini_func,
+        on_datablk_attach attch_func, on_datablk_dettach dettach_func, void *arg);
+
+/***
+ * @description : clear msg block pool
  * @return       {*}
  */
 void msgblk_pool_fini(void);
 
 /***
- * @description : malloc a message block
- * @param        {MsgBlk} *ppmsgblk - pointer to a message block pointer
- * @param        {DataBlk} dblk - message data block which would
- *                      attach to this message block
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*} result of malloc
+ * @description : malloc msg block with a data block attached
+ * @param        {msgblk} *db - pointer to data block attached
+ * @return       {*} - pointer to msg block, got NULL if failed
  */
-esp_err_t msgblk_malloc(MsgBlk *ppmsgblk, DataBlk dblk, uint32_t wait_ms);
+msgblk * msgblk_malloc(datablk *db);
 
 /***
- * @description : free a message block
- * @param        {MsgBlk} pmsgblk - pointer to a message block
- * @return       {*} result of free
- */
-esp_err_t msgblk_free(MsgBlk pmsgblk);
-
-/***
- * @description : init message block
- * @param        {MsgBlk} pmsgblk - pointer to a message block
- * @return       {*} None
- */
-void msgblk_init(MsgBlk pmsgblk);
-
-/***
- * @description : increase reference of a message block
- * @param        {MsgBlk} pmsgblk - pointer to a message block
+ * @description : clear msg block, decrease reference
+ *                  msg block would be release if reference = 0
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-void msgblk_refer(MsgBlk pmsgblk);
+void msgblk_free(msgblk *mb);
 
 /***
- * @description : init message block queue
- * @param        {QueueHandle_t} *pqueue - pointer to queue
- * @param        {uint32_t} length - maxinum length of queue
- * @return       {*} result of init
- */
-esp_err_t msgblk_queue_init(QueueHandle_t *pqueue, uint32_t length);
-
-/***
- * @description : clear message block queue
- * @param        {QueueHandle_t} queue
+ * @description : set valid flag of msg block
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-void msgblk_queue_fini(QueueHandle_t queue);
+void msgblk_set_valid(msgblk *mb);
 
 /***
- * @description : push a message block into a queue
- * @param        {QueueHandle_t} queue - queue for pushing
- * @param        {MsgBlk} pmsgblk - pointer to a message block
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*} result of push
- */
-esp_err_t msgblk_push_queue(QueueHandle_t queue, MsgBlk pmsgblk, uint32_t wait_ms);
-
-/***
- * @description : pop a message block from a queue
- * @param        {QueueHandle_t} queue - queue for poping
- * @param        {MsgBlk} *ppmsgblk - pointer to a message block pointer
- * @param        {uint32_t} wait_ms - wait time in ms
- * @return       {*} result of pop
- */
-esp_err_t msgblk_pop_queue(QueueHandle_t queue, MsgBlk *ppmsgblk, uint32_t wait_ms);
-
-/***
- * @description : attach data block to a message block
- * @param        {MsgBlk} pmblk - pointer to a message block
- * @param        {DataBlk} pdblk - pointer to a data bock
+ * @description : check valida flag
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-esp_err_t msgblk_attach_dbllk(MsgBlk pmblk, DataBlk pdblk);
+bool msgblk_is_valid(msgblk *mb);
 
 /***
- * @description : detach data block from a message bock
- * @param        {MsgBlk} pmblk
- * @param        {DataBlk} pdblk
+ * @description : increase reference of msg block
+ * @param        {msgblk} *mb - pointer to msg block
  * @return       {*}
  */
-esp_err_t msgblk_detach_dbllk(MsgBlk pmblk, DataBlk pdblk);
+void msgblk_ref(msgblk *mb);
 
-#ifdef __cplusplus
-}
-#endif
+/***
+ * @description : attach data block to msg block
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
+ */
+at_error_t msgblk_attach_datablk(msgblk *mb, datablk *db);
+
+/***
+ * @description : dettach data block from msg block
+ * @param        {msgblk} *mb - pointer to msg block
+ * @param        {datablk} *db - pointer to data block
+ * @return       {*}
+ */
+void msgblk_dettach_datablk(msgblk *mb, datablk *db);
+
+/***
+ * @description : push msg block in a circular queue
+ * @param        {circ_queue} *queue - pointer to queue
+ * @param        {msgblk} *mb - poiner to msg block
+ * @param        {int} wait_ms - wait time in ms
+ * @return       {*}
+ */
+at_error_t msgblk_push_circ_queue(circ_queue *queue, msgblk *mb, int wait_ms);
+
+/***
+ * @description : pop msg block from a circular queue
+ * @param        {circ_queue} *queue - pointer to queue
+ * @param        {msgblk} **pmb - pointer to msg block pointer
+ * @param        {int} wait_ms - wait time in ms
+ * @return       {*}
+ */
+at_error_t msgblk_pop_circ_queue(circ_queue *queue, msgblk **pmb, int wait_ms);
+
+/***
+ * @description : get first data block from message block
+ * @param        {msgblk} *mb - pointer to message block
+ * @return       {*}
+ */
+datablk *msgblk_first_datablk(msgblk *mb);
 
 #endif /* _MESSAGE_BLOCK_H_ */
 

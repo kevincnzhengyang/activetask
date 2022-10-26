@@ -10,6 +10,20 @@
 #ifndef _LINUX_MACROS_H_
 #define _LINUX_MACROS_H_
 
+#include <stdio.h>
+
+#if defined(__linux__) || defined(__linux)
+#define INNER_RES_OK                0
+
+#define KRNL_DEBUG(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
+#define KRNL_INFO(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
+#define KRNL_WARN(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
+#define KRNL_ERROR(...) do {fprintf(stderr, __VA_ARGS__);} while(0)
+
+#elif defined(INCLUDE_vTaskDelay)
+#include "esp_err.h"
+#define INNER_RES_OK                ESP_OK
+
 #include "esp_log.h"
 #include "esp_err.h"
 
@@ -18,6 +32,7 @@
 #define KRNL_INFO(fmt, ...)   ESP_LOGI(KRNL_TAG, fmt, ##__VA_ARGS__)
 #define KRNL_WARN(fmt, ...)   ESP_LOGW(KRNL_TAG, fmt, ##__VA_ARGS__)
 #define KRNL_ERROR(fmt, ...)  ESP_LOGE(KRNL_TAG, fmt, ##__VA_ARGS__)
+#endif /* _ESP_PLATFORM */
 
 #define	EINVAL		22	/* Invalid argument */
 
@@ -45,5 +60,71 @@
 #define ERR_CAST(p) ((void *)p)
 
 #define PTR_ERR_OR_ZERO(p) (IS_ERR(p) ? PTR_ERR(p) : 0)
+
+#define typeof_member(T, m)	typeof(((T*)0)->m)
+
+/**
+ * container_of - cast a member of a structure out to the containing structure
+ * @ptr:	the pointer to the member.
+ * @type:	the type of the container struct this is embedded in.
+ * @member:	the name of the member within the struct.
+ *
+ */
+#define container_of(ptr, type, member) ({				\
+	void *__mptr = (void *)(ptr);					\
+	((type *)(__mptr - offsetof(type, member))); })
+
+/*
+#define container_of(ptr, type, member) ({				\
+	void *__mptr = (void *)(ptr);					\
+	static_assert(SAME_TYPE(*(ptr), ((type *)0)->member) ||	\
+		      SAME_TYPE(*(ptr), void),			\
+		      "pointer type mismatch in container_of()");	\
+	((type *)(__mptr - offsetof(type, member))); })
+*/
+
+#ifndef __SIZEOF_L1_CACHE__
+#define __SIZEOF_L1_CACHE__     64
+#endif /* __SIZEOF_L1_CACHE__ */
+
+#define __Pad1Size__(type) \
+    ((__SIZEOF_L1_CACHE__ - sizeof(type))/sizeof(char))
+
+#define __Pad2Size__(type1, type2) \
+    ((__SIZEOF_L1_CACHE__ - sizeof(type1) - sizeof(type2))/sizeof(char))
+
+
+#define NO_LESS_THAN(val, limit) ((val) < (limit) ? (limit) : (val))
+
+#define NO_MORE_THAN(val, limit) ((val) > (limit) ? (limit) : (val))
+
+#if defined(__linux__) || defined(__linux)
+#include <stdlib.h>
+#include <sys/time.h>
+
+#define delay_ms(ms)    usleep((ms)*1000)
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline unsigned long get_sys_ms(void)
+{
+    struct timeval start;
+    gettimeofday(&start, NULL);
+    return (unsigned long) (start.tv_sec*1000+start.tv_usec/1000);
+};
+
+#ifdef __cplusplus
+}
+#endif
+
+#elif defined(INCLUDE_vTaskDelay)
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#define delay_ms(ms)    vTaskDelay(pdMS_TO_TICKS(ms))
+#define get_sys_ms()    pdTICKS_TO_MS(xTaskGetTickCount())
+#endif /* _ESP_PLATFORM */
 
 #endif /* _LINUX_MACROS_H_ */

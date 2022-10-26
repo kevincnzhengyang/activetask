@@ -15,9 +15,11 @@
 #include <stdbool.h>
 #include <string.h>
 
+#if defined(INCLUDE_vTaskDelay)
 #include "mbedtls/md5.h"
+#endif /* _ESP_PLATFORM */
 
-#include "linux_container_of.h"
+#include "linux_macros.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -301,8 +303,11 @@ static inline void hlist_move_list(struct hlist_head *old,
 #define hash_min(val, bits)							\
 	(sizeof(val) <= 4 ? hash_32(val, bits) : hash_long(val, bits))
 */
-static inline uint32_t hash_min(const char *val, size_t bits)
+static inline unsigned int hash_min(const char *val, size_t bits)
 {
+    #if defined(__linux__) || defined(__linux)
+
+    #elif defined(INCLUDE_vTaskDelay)
     mbedtls_md5_context ctx;
     unsigned char decrypt[16];
 
@@ -319,6 +324,8 @@ static inline uint32_t hash_min(const char *val, size_t bits)
     uint32_t digest = (decrypt[3] << 24 | decrypt[2] << 16 \
                         | decrypt[1] << 8 | decrypt[0]) >> (32 - bits);
     KRNL_DEBUG("%s md5 digest is:<%lx>", val, digest);
+    #endif /* _ESP_PLATFORM */
+
     return digest;
 }
 

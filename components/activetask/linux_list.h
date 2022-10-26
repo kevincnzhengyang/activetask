@@ -11,7 +11,8 @@
 #define _LINUX_LIST_H_
 
 #include <stddef.h>
-#include "linux_container_of.h"
+#include <stdatomic.h>
+#include "linux_macros.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,7 +21,6 @@ extern "C" {
 struct list_head {
 	struct list_head *next, *prev;
 };
-
 
 /*
  * Circular doubly linked list implementation.
@@ -49,24 +49,6 @@ static inline void INIT_LIST_HEAD(struct list_head *list)
 	list->next = list;  //WRITE_ONCE(list->next, list);
 	list->prev = list;  //WRITE_ONCE(list->prev, list);
 }
-
-// #ifdef CONFIG_DEBUG_LIST
-// extern bool __list_add_valid(struct list_head *new,
-// 			      struct list_head *prev,
-// 			      struct list_head *next);
-// extern bool __list_del_entry_valid(struct list_head *entry);
-// #else
-// static inline bool __list_add_valid(struct list_head *new,
-// 				struct list_head *prev,
-// 				struct list_head *next)
-// {
-// 	return true;
-// }
-// static inline bool __list_del_entry_valid(struct list_head *entry)
-// {
-// 	return true;
-// }
-// #endif
 
 /*
  * Insert a new entry between two known consecutive entries.
@@ -575,7 +557,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @member:	the name of the list_head within the struct.
  */
 #define list_next_entry(pos, member) \
-	list_entry((pos)->member.next, typeof(*(pos)), member)
+	list_entry((pos)->member.next, __typeof__(*(pos)), member)
 
 /**
  * list_next_entry_circular - get the next element in list
@@ -687,7 +669,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @member:	the name of the list_head within the struct.
  */
 #define list_for_each_entry(pos, head, member)				\
-	for (pos = list_first_entry(head, typeof(*pos), member);	\
+	for (pos = list_first_entry(head, __typeof__(*pos), member);	\
 	     !list_entry_is_head(pos, head, member);			\
 	     pos = list_next_entry(pos, member))
 
@@ -774,7 +756,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @member:	the name of the list_head within the struct.
  */
 #define list_for_each_entry_safe(pos, n, head, member)			\
-	for (pos = list_first_entry(head, typeof(*pos), member),	\
+	for (pos = list_first_entry(head, __typeof__(*pos), member),	\
 		n = list_next_entry(pos, member);			\
 	     !list_entry_is_head(pos, head, member); 			\
 	     pos = n, n = list_next_entry(n, member))

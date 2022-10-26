@@ -1,3 +1,3 @@
-idf_component_register(SRCS "data_blk.c" "msg_blk.c" "active_task.c"
+idf_component_register(SRCS
                     INCLUDE_DIRS "."
                     REQUIRES mbedtls)
