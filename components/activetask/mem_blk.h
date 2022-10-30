@@ -28,6 +28,10 @@
 #define MEMBLK_STACK_NUM    3
 #endif /* MEMBLK_STACK_NUM */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /***
  * @description : malloc a memory block
  * @param        {int} size - size of memory block
@@ -67,5 +71,9 @@ at_error_t memblk_pool_init(void);
  * @return       {*}
  */
 void memblk_pool_fini(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MEM_BLOCK_H_ */

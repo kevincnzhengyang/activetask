@@ -37,6 +37,7 @@
 #define TASK_SVC_BREAK              (INNER_MSG_ERR_BASE+ 8)
 #define TASK_NOT_EXIST              (INNER_MSG_ERR_BASE+ 9)
 #define TASK_NEXT_NOT_EXIST         (INNER_MSG_ERR_BASE+ 10)
+#define TASK_FAILED_CREATE          (INNER_MSG_ERR_BASE+ 11)
 
 typedef int at_error_t;
 

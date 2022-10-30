@@ -20,6 +20,10 @@
 #define MSGBLK_NUM     8
 #endif /* MSGBLK_NUM */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct msgblk_t {
     int                       msg_type;
     struct list_head      list_datablk;     // message datablock list
@@ -157,6 +161,10 @@ at_error_t msgblk_pop_circ_queue(circ_queue *queue, msgblk **pmb, int wait_ms);
  * @return       {*}
  */
 datablk *msgblk_first_datablk(msgblk *mb);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MESSAGE_BLOCK_H_ */
 

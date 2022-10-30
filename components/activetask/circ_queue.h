@@ -20,6 +20,10 @@
 
 #define QUEUE_INTV_MS     10
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct circ_queue_t circ_queue;
 
 struct circ_queue_t {
@@ -61,5 +65,9 @@ void circ_queue_delete(circ_queue *pqueue);
 #define circ_queue_is_empty(pqueue) CIRC_IS_EMPTY(&(pqueue)->_circ_buf)
 
 #define circ_queue_is_full(pqueue) CIRC_IS_FULL(&(pqueue)->_circ_buf)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _CIRCULAR_QUEUE_H_ */

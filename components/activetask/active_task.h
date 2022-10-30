@@ -24,6 +24,10 @@
 #include "circ_queue.h"
 #include "msg_blk.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct active_task_t active_task;
 
 struct active_task_t {
@@ -113,6 +117,7 @@ struct active_task_t {
 /***
  * @description : create an active task
  * @param        {char} *name - name of active task
+ * @param        {int} t_size - size of task
  * @param        {int} stack - stack of task
  * @param        {int} priority - priority
  * @param        {int} core - cpu affinity
@@ -122,7 +127,7 @@ struct active_task_t {
  * @param        {void} *app_data - application data
  * @return       {*}
  */
-active_task *active_task_create(const char *name, int stack,
+active_task *active_task_create(const char *name, int t_size, int stack,
         int priority, int core, size_t queue_len, int interval,
         int schedule, void *app_data);
 
@@ -132,5 +137,29 @@ active_task *active_task_create(const char *name, int stack,
  * @return       {*}
  */
 void active_task_delete(active_task *task);
+
+#define active_task_config(task, begin, svc, put, put_next, init, loop, msg, sch) \
+do { \
+    if (NULL == task) break; \
+    if (NULL != begin) task->task_begin = begin; \
+    if (NULL != svc) task->task_svc = svc; \
+    if (NULL != put) task->put_message = put; \
+    if (NULL != put_next) task->put_message_next = put_next; \
+    if (NULL != init) task->on_init = init; \
+    if (NULL != loop) task->on_loop = loop; \
+    if (NULL != msg) task->on_message = msg; \
+    if (NULL != sch) task->on_schedule = sch; \
+} while (0)
+
+/***
+ * @description : start running of an active task
+ * @param        {active_task} *task - pointer to active task
+ * @return       {*}
+ */
+at_error_t dft_task_begin(active_task *task);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _ACTIVE_TASK_H_ */

@@ -26,6 +26,10 @@
 #define DATABLK_STACK_NUM    3
 #endif /* DATABLK_STACK_NUM */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct datablk_t {
     int                      data_type;
     void                       *rd_ptr;
@@ -160,5 +164,9 @@ int datablk_move_rd(datablk *db, int nbytes);
  * @return       {*} - return space if n > space
  */
 int datablk_move_wr(datablk *db, int nbytes);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _DATA_BLOCK_H_ */

@@ -2,7 +2,7 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-24 17:29:26
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-26 22:51:07
+ * @LastEditTime: 2022-10-30 13:58:15
  * @FilePath    : /activetask/components/activetask/active_task.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
@@ -99,7 +99,7 @@ at_error_t dft_task_begin(active_task *task)
  * @param        {active_task} *task - pointer to active task
  * @return       {*}
  */
-at_error_t dft_task_svc(active_task *task)
+static at_error_t dft_task_svc(active_task *task)
 {
     if (NULL == task) return INNER_INVAILD_PARAM;
     KRNL_DEBUG("task %s running...\n", task->name);
@@ -157,7 +157,7 @@ at_error_t dft_task_svc(active_task *task)
  * @param        {int} wait_ms - wait time in ms
  * @return       {*}
  */
-at_error_t dft_put_message(active_task *task, msgblk *mblk, int wait_ms)
+static at_error_t dft_put_message(active_task *task, msgblk *mblk, int wait_ms)
 {
     if (NULL == task || NULL == mblk || NULL == task->queue)
         return INNER_INVAILD_PARAM;
@@ -172,7 +172,7 @@ at_error_t dft_put_message(active_task *task, msgblk *mblk, int wait_ms)
  * @param        {int} wait_ms - wait time in ms
  * @return       {*}
  */
-at_error_t dft_put_message_next(active_task *task, msgblk *mblk, int wait_ms)
+static at_error_t dft_put_message_next(active_task *task, msgblk *mblk, int wait_ms)
 {
     if (NULL == task || NULL == mblk) return INNER_INVAILD_PARAM;
     if (NULL == task->next_task || NULL == task->next_task->queue)
@@ -182,22 +182,24 @@ at_error_t dft_put_message_next(active_task *task, msgblk *mblk, int wait_ms)
 }
 
 /***
- * @description : create a task instantce
- * @param        {char *} name - name of the task
- * @param        {uint32_t} stack - stack size of FreeRTOS task
- * @param        {UBaseType_t} priority - prority of FreeRTOS task
- * @param        {BaseType_t} core - cpu affinity
- * @param        {size_t} queue_length - length of the message queue
- * @param        {uint32_t} interval - interva time in ms for receiving, 0 means blocked
- * @param        {uint32_t} schedule - schedule time in ms
- * @param        {void} *data - user defined data
- * @return       {*} - pointer to an active task
+ * @description : create an active task
+ * @param        {char} *name - name of active task
+ * @param        {int} t_size - size of task
+ * @param        {int} stack - stack of task
+ * @param        {int} priority - priority
+ * @param        {int} core - cpu affinity
+ * @param        {size_t} queue_len - length of queue
+ * @param        {int} interval - interva time in ms for receiving, 0 means blocked
+ * @param        {int} schedule - schedule time in ms
+ * @param        {void} *app_data - application data
+ * @return       {*}
  */
-active_task *active_task_create(const char *name, int stack,
+active_task *active_task_create(const char *name, int t_size, int stack,
         int priority, int core, size_t queue_len, int interval,
         int schedule, void *app_data)
 {
-    active_task *task = (active_task *)malloc(SIZE_ACTIVE_TASK);
+    t_size = NO_LESS_THAN(t_size, SIZE_ACTIVE_TASK);
+    active_task *task = (active_task *)malloc(t_size);
     if (NULL == task) {
         KRNL_ERROR("Failed to malloc for task");
         return NULL;
@@ -213,14 +215,9 @@ active_task *active_task_create(const char *name, int stack,
     task->queue_length = queue_len;
     task->next_task = NULL;
     task->app_data = app_data;
-    task->task_begin = dft_task_begin;
-    task->task_svc = dft_task_svc;
-    task->put_message = dft_put_message;
-    task->put_message_next = dft_put_message_next;
-    task->on_init = NULL;
-    task->on_loop = NULL;
-    task->on_message = NULL;
-    task->on_schedule = NULL;
+
+    active_task_config(task, dft_task_begin, dft_task_svc, dft_put_message,
+            dft_put_message_next, NULL, NULL, NULL, NULL);
     KRNL_DEBUG("task %s created\n", task->name);
     return task;
 }

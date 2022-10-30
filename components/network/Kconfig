@@ -1,0 +1,56 @@
+menu "Network"
+    menu "Provisioning"
+        config PROV_SOFTAP
+            int "provisioning WiFi using SoftAP"
+            default 1
+        config PROV_BLE
+            int "provisioning WiFi using BLE"
+            default 1
+        # TODO security
+    endmenu
+    menu "Protocol Layer"
+        choice  LAYER_TYPE
+            prompt "Application Protocol Layer Type"
+            default PRO_MQTT
+            config PRO_COAP
+                bool "RFC 7252 Constrained Application Protocol"
+            config PRO_MQTT
+                bool "MQTT Version 3.0"
+            config PRO_MICRO_DDS
+                bool "Micro DDS"
+        endchoice
+        config MQTT_BROKER_URL
+            string "Broker URL for MQTT"
+            depends on PRO_MQTT
+            default "mqtt://192.168.3.2"
+            help
+                URL of the broker to connect to
+        menu "CoAP Client Configuration"
+            depends on PRO_COAP
+            config COAP_TARGET_URI
+                string "Target Uri"
+                default "coaps://californium.eclipseprojects.io"
+                help
+                    Target uri for the example to use. Use coaps:// prefix for encrypted traffic
+                    using Pre-Shared Key (PSK) or Public Key Infrastructure (PKI).
+
+            config COAP_PSK_KEY
+                string "Preshared Key (PSK) to used in the connection to the CoAP server"
+                depends on COAP_MBEDTLS_PSK
+                default "sesame"
+                help
+                    The Preshared Key to use to encrypt the communicatons. The same key must be
+                    used at both ends of the CoAP connection, and the CoaP client must request
+                    an URI prefixed with coaps:// instead of coap:// for DTLS to be used.
+
+            config COAP_PSK_IDENTITY
+                string "PSK Client identity (username)"
+                depends on COAP_MBEDTLS_PSK
+                default "password"
+                help
+                    The identity (or username) to use to identify to the CoAP server which
+                    PSK key to use.
+
+        endmenu
+    endmenu
+endmenu
