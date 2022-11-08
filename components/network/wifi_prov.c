@@ -2,7 +2,7 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-10-29 23:25:20
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-10-31 00:03:09
+ * @LastEditTime: 2022-11-07 00:03:33
  * @FilePath    : /activetask/components/network/wifi_prov.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
@@ -33,6 +33,8 @@
 #define PROV_TRANSPORT_SOFTAP   "softap"
 #define PROV_TRANSPORT_BLE      "ble"
 #define QRCODE_BASE_URL         "https://espressif.github.io/esp-jumpstart/qrcode.html"
+
+static int g_wifi_prov_called = 0;
 
 /* Event handler for catching system events */
 static void event_handler(void* arg, esp_event_base_t event_base,
@@ -166,6 +168,9 @@ bool wifi_sta_is_provisioned(void)
  */
 at_error_t wifi_sta_start_provision(EventGroupHandle_t event_group)
 {
+    if (0 != g_wifi_prov_called) return INNER_RES_OK;   // called already
+    else g_wifi_prov_called = 1;
+
     // assume nvs flash init at main
     // /* Initialize NVS partition */
     // esp_err_t ret = nvs_flash_init();
