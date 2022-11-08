@@ -4,6 +4,12 @@ Based on UDP with content in JSON, N2N protocol defines functions of a NOT centr
 
 # Subjects
 
+## Device
+
+Device is the instance in the local network which can be identify with mDNS.
+
+Device can be one of Node, Terminal or Proxy.
+
 ## Node
 
 Node refers to an ESP32 embeded module, which has resources to perform some functions. In functional perspect, a Node may contains two or more Entry Points, each of these is dedicated to specific function.

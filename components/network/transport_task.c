@@ -2,7 +2,7 @@
  * @Author      : kevin.z.y <kevin.cn.zhengyang@gmail.com>
  * @Date        : 2022-11-07 17:54:46
  * @LastEditors : kevin.z.y <kevin.cn.zhengyang@gmail.com>
- * @LastEditTime: 2022-11-08 00:24:49
+ * @LastEditTime: 2022-11-08 13:14:21
  * @FilePath    : /activetask/components/network/transport_task.c
  * @Description :
  * Copyright (c) 2022 by Zheng, Yang, All Rights Reserved.
@@ -31,6 +31,12 @@
 
 typedef struct {
     struct sockaddr_in       peer_addr;     // remote addr
+    char                     *instname;     // instance name
+    struct list_head         host_node;
+} mdns_host;
+
+typedef struct {
+    struct sockaddr_in       peer_addr;     // remote addr
     struct sockaddr_in      local_addr;     // local addr
     int                         socket;     // socket
 } n2n_transpport;
@@ -44,8 +50,9 @@ static at_error_t start_mdns_service(void)
     }
 
     // set all device in Node, Terminal and Proxy
-    mdns_hostname_set("my-esp32");
-    mdns_instance_name_set("Jhon's ESP32 Thing");
+    n2n_device *dev = n2n_device_load();
+    mdns_hostname_set(dev->hostname);
+    mdns_instance_name_set(dev->instname);
 }
 
 static at_error_t add_mdns_services(void)
@@ -59,6 +66,11 @@ static at_error_t resolve_mdns_host(const char *dev_name, struct sockaddr_in *ad
 }
 
 static at_error_t find_mdns_service(const char *dev_name, char *route, size_t route_len)
+{
+
+}
+
+static struct list_head *find_mdns_all(void)
 {
 
 }
